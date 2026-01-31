@@ -1,0 +1,40 @@
+use serde::Deserialize;
+
+use crate::error::MBError;
+
+const FRONTMATTER_DELIMITER: &str = "---";
+
+#[derive(Deserialize, Debug)]
+pub struct MBFrontmatter {
+    pub title: String,
+    pub author: String,
+    pub date: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub slug: Option<String>,
+    pub draft: bool
+}
+
+pub fn parse(content: String) -> Result<(Option<MBFrontmatter>, String), MBError> {
+    let mut lines = content.lines();
+
+    if lines.next().map(|l| l.trim()) != Some(FRONTMATTER_DELIMITER) {
+        return Ok((None, content.to_string()));
+    }
+
+    let mut json_lines = Vec::new();
+
+    for line in lines.by_ref() {
+        if line.trim() == FRONTMATTER_DELIMITER {
+            let json = json_lines.join("\n");
+            let body = lines.collect::<Vec<_>>().join("\n");
+            let fm = serde_json::from_str::<MBFrontmatter>(&json)
+                .map_err(|e| MBError::Frontmatter(e.to_string()))?;
+
+            return Ok((Some(fm), body));
+        }
+
+        json_lines.push(line);
+    }
+
+    Err(MBError::Frontmatter("unterminated frontmatter block".into()))
+}
