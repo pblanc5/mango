@@ -5,16 +5,15 @@ use crate::error::MangoError;
 const FRONTMATTER_DELIMITER: &str = "---";
 
 #[derive(Deserialize, Debug)]
-pub struct MBFrontmatter {
+pub struct MangoFrontmatter {
     pub title: String,
     pub author: String,
     pub date: Option<String>,
     pub tags: Option<Vec<String>>,
-    pub slug: Option<String>,
     pub draft: bool
 }
 
-pub fn parse(content: String) -> Result<(Option<MBFrontmatter>, String), MangoError> {
+pub fn parse(content: String) -> Result<(Option<MangoFrontmatter>, String), MangoError> {
     let mut lines = content.lines();
 
     if lines.next().map(|l| l.trim()) != Some(FRONTMATTER_DELIMITER) {
@@ -27,7 +26,7 @@ pub fn parse(content: String) -> Result<(Option<MBFrontmatter>, String), MangoEr
         if line.trim() == FRONTMATTER_DELIMITER {
             let json = json_lines.join("\n");
             let body = lines.collect::<Vec<_>>().join("\n");
-            let fm = serde_json::from_str::<MBFrontmatter>(&json)
+            let fm = serde_json::from_str::<MangoFrontmatter>(&json)
                 .map_err(|e| MangoError::Frontmatter(e.to_string()))?;
 
             return Ok((Some(fm), body));

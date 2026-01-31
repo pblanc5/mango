@@ -5,7 +5,7 @@ use crate::{content::{frontmatter, page::{Page, PageType}}, error::MangoError};
 pub fn load(path: &Path) -> Result<Vec<Page>, MangoError> {
     let mut pages = Vec::new();
 
-    match site_traversal(path, &mut pages) {
+    match site_traversal(path, path, &mut pages) {
         Ok(_) => (),
         Err(e) => {
             return Err(e)
@@ -15,13 +15,13 @@ pub fn load(path: &Path) -> Result<Vec<Page>, MangoError> {
     Ok(pages)
 }
 
-fn site_traversal(path: &Path, pages: &mut Vec<Page>) -> Result<(), MangoError> {
-    if !path.is_dir() {
-        let msg = format!("{} is not a directory", path.to_str().unwrap_or_else(|| ""));
-        return Err(MangoError::User(msg));
+fn site_traversal(site: &Path, parent: &Path, pages: &mut Vec<Page>) -> Result<(), MangoError> {
+    if !site.is_dir() {
+        let msg = format!("{} is not a directory", site.to_str().unwrap_or(""));
+        return Err(MangoError::General(msg));
     }
     
-    for result in fs::read_dir(path)? {
+    for result in fs::read_dir(parent)? {
         let entry = result?;
         let path = &entry.path();
 
@@ -31,17 +31,20 @@ fn site_traversal(path: &Path, pages: &mut Vec<Page>) -> Result<(), MangoError> 
 
              match frontmatter {
                 Some(fm) => {
-                    let page= Page::new(fm, markdown, PageType::General);
+                    let mut page= Page::new(fm, markdown, PageType::General);
+                    println!("{:?}", path);
+                    page.generate_slug(path, site)?;
                     pages.push(page);
                 },
+
                 None => {
-                    return Err(MangoError::Frontmatter("no frontmatter present".into()));
+                    return Err(MangoError::Frontmatter("failed to generate frontmatter".into()));
                 }
             };                 
         }
 
         if path.is_dir() {
-           let _ = site_traversal(path, pages);
+           let _ = site_traversal(site,path, pages);
         }
     }
 

@@ -1,6 +1,8 @@
+use std::path::Path;
+
 use serde::Serialize;
 
-use crate::content::frontmatter::MBFrontmatter;
+use crate::{content::frontmatter::MangoFrontmatter, error::MangoError};
 
 #[derive(Serialize, Debug)]
 pub enum PageType {
@@ -20,16 +22,28 @@ pub struct Page {
 }
 
 impl Page {
-    pub fn new(fm: MBFrontmatter, content: String, kind: PageType) -> Self {
+    pub fn new(fm: MangoFrontmatter, content: String, kind: PageType) -> Self {
         Page { 
             title: fm.title, 
             author: fm.author, 
-            date: fm.date.unwrap_or_else(|| String::new()), 
-            slug: fm.slug.unwrap_or_else(|| String::new()), 
-            tags: fm.tags.unwrap_or_else(|| Vec::new()), 
-            content: content,
+            date: fm.date.unwrap_or_default(),
+            slug: String::new(),
+            tags: fm.tags.unwrap_or_default(), 
+            content,
             draft: fm.draft,
-            kind: kind
+            kind
         }
+    }
+
+    pub fn generate_slug(&mut self, path: &Path, site: &Path) -> Result<(), MangoError> {
+        println!("{:?}", site);
+        let slug = path.strip_prefix(site)
+            .map_err(|_e| MangoError::General("unable to generate slug from path".into()))?
+            .with_extension("")
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        self.slug = slug;
+        Ok(())
     }
 }

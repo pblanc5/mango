@@ -2,16 +2,16 @@ use std::path::Path;
 
 use clap::{Args, Parser, Subcommand};
 
-use crate::{content::loader, error::MangoError, render::template::render_page};
+use crate::{build::output, content::loader, error::MangoError, render::template::render_page};
 
 #[derive(Args, Debug)]
 struct BuildOpts {
     // path to templates
-    #[arg(long, default_value = "templates")]
+    #[arg(long, default_value = "meta/templates")]
     templates: String,
 
     // path to themes
-    #[arg(long, default_value = "themes")]
+    #[arg(long, default_value = "meta/themes")]
     themes: String,
 
     // site directory name
@@ -46,10 +46,6 @@ enum MangoActions {
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct MangoCli {
-    // project root
-    #[arg(default_value = ".")]
-    project: String,
-
     // mango actions
     #[command(subcommand)]
     command: MangoActions,
@@ -57,14 +53,14 @@ struct MangoCli {
 
 pub fn run() -> Result<(), MangoError> {
     let args = MangoCli::parse();
-    let project_path = Path::new(&args.project);
+    let project_path = Path::new(".");
 
     match args.command {
         MangoActions::Build(opts) => build(project_path, opts),
 
         MangoActions::Run(opts) => {
             print!("{}:{}", opts.address, opts.port);
-            return Ok(())
+            Ok(())
         }   
     }
 }
@@ -76,9 +72,10 @@ fn build(project_path: &Path, opts: BuildOpts) -> Result<(), MangoError> {
 
     for page in pages {
         let templates = Path::new(&opts.templates);
-        println!("{:?}", templates);
-        let html = render_page(page, templates)?;
-        println!("{}\n\n", html);
+        let html = render_page(&page, templates)?;
+        let dist = Path::new(&opts.output);
+        output::write(dist, page.slug.clone(), html)?;
+        println!("{}", page.slug);
     }
 
     Ok(())

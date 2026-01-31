@@ -6,8 +6,8 @@ pub enum MangoError {
     #[error("frontmatter error: {0}")]
     Frontmatter(String),
 
-    #[error("user error: {0}")]
-    User(String),
+    #[error("general error: {0}")]
+    General(String),
 
     #[error("template error")]
     Template(#[from] tera::Error)
