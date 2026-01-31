@@ -1,5 +1,5 @@
 #[derive(thiserror::Error, Debug)]
-pub enum MBError {
+pub enum MangoError {
     #[error("IO error")]
     Io(#[from] std::io::Error),
 

@@ -1,5 +1,6 @@
 mod cli;
 mod content;
+mod render;
 mod error;
 
 fn main() {

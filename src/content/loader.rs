@@ -1,8 +1,8 @@
 use std::{fs, path::Path};
 
-use crate::{content::{frontmatter, page::{Page, PageType}}, error::MBError};
+use crate::{content::{frontmatter, page::{Page, PageType}}, error::MangoError};
 
-pub fn load(path: &Path) -> Result<Vec<Page>, MBError> {
+pub fn load(path: &Path) -> Result<Vec<Page>, MangoError> {
     let mut pages = Vec::new();
 
     match site_traversal(path, &mut pages) {
@@ -15,10 +15,10 @@ pub fn load(path: &Path) -> Result<Vec<Page>, MBError> {
     Ok(pages)
 }
 
-fn site_traversal(path: &Path, pages: &mut Vec<Page>) -> Result<(), MBError> {
+fn site_traversal(path: &Path, pages: &mut Vec<Page>) -> Result<(), MangoError> {
     if !path.is_dir() {
         let msg = format!("{} is not a directory", path.to_str().unwrap_or_else(|| ""));
-        return Err(MBError::User(msg));
+        return Err(MangoError::User(msg));
     }
     
     for result in fs::read_dir(path)? {
@@ -35,7 +35,7 @@ fn site_traversal(path: &Path, pages: &mut Vec<Page>) -> Result<(), MBError> {
                     pages.push(page);
                 },
                 None => {
-                    return Err(MBError::Frontmatter("no frontmatter present".into()));
+                    return Err(MangoError::Frontmatter("no frontmatter present".into()));
                 }
             };                 
         }

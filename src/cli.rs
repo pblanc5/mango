@@ -2,7 +2,7 @@ use std::path::Path;
 
 use clap::{Args, Parser, Subcommand};
 
-use crate::{content::{loader, }, error::MBError};
+use crate::{content::loader, error::MangoError, render::template::render_page};
 
 #[derive(Args, Debug)]
 struct BuildOpts {
@@ -35,7 +35,7 @@ struct ServerOpts {
 }
 
 #[derive(Subcommand, Debug)]
-enum MBActions {
+enum MangoActions {
     // compile site
     Build(BuildOpts),
      
@@ -45,76 +45,41 @@ enum MBActions {
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
-struct MBCli {
+struct MangoCli {
     // project root
     #[arg(default_value = ".")]
     project: String,
 
     // mango actions
     #[command(subcommand)]
-    command: MBActions,
+    command: MangoActions,
 }
 
-pub fn run() -> Result<(), MBError> {
-    let args = MBCli::parse();
-    //let path = Path::new(&args.directory);
-    //_ = compile_site(path);
+pub fn run() -> Result<(), MangoError> {
+    let args = MangoCli::parse();
+    let project_path = Path::new(&args.project);
 
     match args.command {
-        MBActions::Build(opts) => {
+        MangoActions::Build(opts) => build(project_path, opts),
 
-            let project_path = Path::new(&args.project);
-            let site_path = project_path.join(&opts.site);
-            println!("{}", site_path.to_str().unwrap_or_else(|| "no path found"));
-            let pages = loader::load(site_path.as_path())?;
-
-            //let templates = &opts.templates;
-            //let template_glob = String::from(templates) + "/**/*.html";
-            //let tera = match Tera::new(&template_glob) {
-            //    Ok(t) => t,
-            //    Err(e) => {
-            //        eprintln!("{}", e.to_string());
-            //        ::std::process::exit(1);
-            //    }
-            //};
-
-            //use tera::Context;
-            //let mut context = Context::new();
-            //let page = Page {
-            //    title: String::from("Test Page"),
-            //    author: String::from("me"),
-            //    date: String::from("today"),
-            //    slug: String::from("test-page"),
-            //    tags: vec![String::from("test")],
-            //    content: String::from("Welcome to my page")
-            //};
-
-            //context.insert("page", &page);
-            //let template = "page.html";
-            //let html = match tera.render(template, &context) {
-            //    Ok(r) => r,
-            //    Err(e) => {
-            //        eprintln!("{}", e.to_string());
-            //        ::std::process::exit(1);
-            //
-            //    }
-            //};
-
-
-            for page in pages {
-                println!("{:?}", page);
-            }
-            
-
-        },
-
-        MBActions::Run(opts) => {
+        MangoActions::Run(opts) => {
             print!("{}:{}", opts.address, opts.port);
             return Ok(())
-        }
+        }   
+    }
+}
 
-        
-    };
+fn build(project_path: &Path, opts: BuildOpts) -> Result<(), MangoError> {
+    
+    let site_path = project_path.join(&opts.site);
+    let pages = loader::load(site_path.as_path())?;
+
+    for page in pages {
+        let templates = Path::new(&opts.templates);
+        println!("{:?}", templates);
+        let html = render_page(page, templates)?;
+        println!("{}\n\n", html);
+    }
 
     Ok(())
 }

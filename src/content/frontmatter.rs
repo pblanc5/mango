@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use crate::error::MBError;
+use crate::error::MangoError;
 
 const FRONTMATTER_DELIMITER: &str = "---";
 
@@ -14,7 +14,7 @@ pub struct MBFrontmatter {
     pub draft: bool
 }
 
-pub fn parse(content: String) -> Result<(Option<MBFrontmatter>, String), MBError> {
+pub fn parse(content: String) -> Result<(Option<MBFrontmatter>, String), MangoError> {
     let mut lines = content.lines();
 
     if lines.next().map(|l| l.trim()) != Some(FRONTMATTER_DELIMITER) {
@@ -28,7 +28,7 @@ pub fn parse(content: String) -> Result<(Option<MBFrontmatter>, String), MBError
             let json = json_lines.join("\n");
             let body = lines.collect::<Vec<_>>().join("\n");
             let fm = serde_json::from_str::<MBFrontmatter>(&json)
-                .map_err(|e| MBError::Frontmatter(e.to_string()))?;
+                .map_err(|e| MangoError::Frontmatter(e.to_string()))?;
 
             return Ok((Some(fm), body));
         }
@@ -36,5 +36,5 @@ pub fn parse(content: String) -> Result<(Option<MBFrontmatter>, String), MBError
         json_lines.push(line);
     }
 
-    Err(MBError::Frontmatter("unterminated frontmatter block".into()))
+    Err(MangoError::Frontmatter("unterminated frontmatter block".into()))
 }

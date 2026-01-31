@@ -4,7 +4,6 @@ use crate::content::frontmatter::MBFrontmatter;
 
 #[derive(Serialize, Debug)]
 pub enum PageType {
-    Index,
     General
 }
 
