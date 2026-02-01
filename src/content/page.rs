@@ -13,6 +13,7 @@ pub enum PageType {
 pub struct Page {
     pub title: String,
     pub author: String,
+    pub description: String,
     pub date: String,
     pub slug: String,
     pub tags: Vec<String>,
@@ -25,7 +26,8 @@ impl Page {
     pub fn new(fm: MangoFrontmatter, content: String, kind: PageType) -> Self {
         Page { 
             title: fm.title, 
-            author: fm.author, 
+            author: fm.author,
+            description: fm.description,
             date: fm.date.unwrap_or_default(),
             slug: String::new(),
             tags: fm.tags.unwrap_or_default(), 
@@ -36,7 +38,6 @@ impl Page {
     }
 
     pub fn generate_slug(&mut self, path: &Path, site: &Path) -> Result<(), MangoError> {
-        println!("{:?}", site);
         let slug = path.strip_prefix(site)
             .map_err(|_e| MangoError::General("unable to generate slug from path".into()))?
             .with_extension("")
@@ -47,3 +48,4 @@ impl Page {
         Ok(())
     }
 }
+

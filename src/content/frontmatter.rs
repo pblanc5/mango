@@ -8,6 +8,7 @@ const FRONTMATTER_DELIMITER: &str = "---";
 pub struct MangoFrontmatter {
     pub title: String,
     pub author: String,
+    pub description: String,
     pub date: Option<String>,
     pub tags: Option<Vec<String>>,
     pub draft: bool

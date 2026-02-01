@@ -2,7 +2,7 @@ use std::path::Path;
 
 use clap::{Args, Parser, Subcommand};
 
-use crate::{build::output, content::loader, error::MangoError, render::template::render_page};
+use crate::{build::{generate::{content, section}, index, output}, content::loader, error::MangoError, render::template};
 
 #[derive(Args, Debug)]
 struct BuildOpts {
@@ -68,15 +68,18 @@ pub fn run() -> Result<(), MangoError> {
 fn build(project_path: &Path, opts: BuildOpts) -> Result<(), MangoError> {
     
     let site_path = project_path.join(&opts.site);
-    let pages = loader::load(site_path.as_path())?;
+    let templates = Path::new(&opts.templates);
+    let dist = Path::new(&opts.output);
 
-    for page in pages {
-        let templates = Path::new(&opts.templates);
-        let html = render_page(&page, templates)?;
-        let dist = Path::new(&opts.output);
-        output::write(dist, page.slug.clone(), html)?;
-        println!("{}", page.slug);
-    }
+    let pages = loader::load(site_path.as_path())?;
+    let tera = template::load_templates(templates)?;
+
+    let items = content::build(&pages)?;
+    output::write(&tera, dist, items)?;
+    
+    let si = index::section::build_section_index(&pages);
+    let sections = section::build(si);
+    output::write(&tera, dist, sections)?;
 
     Ok(())
 }
