@@ -35,3 +35,14 @@ fn get_final_path(dist: &Path, slug: &str) -> PathBuf {
     path
 }
 
+pub fn append_to_path(path: PathBuf, addition: &str) -> PathBuf {
+    let mut path = path.into_os_string();
+
+    if !addition.starts_with("/") {
+        path.push("/");
+    }
+    
+    path.push(addition);
+    path.into()
+}
+

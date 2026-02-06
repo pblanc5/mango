@@ -32,13 +32,13 @@ fn site_traversal(site: &Path, parent: &Path, pages: &mut Vec<Page>) -> Result<(
              match frontmatter {
                 Some(fm) => {
                     let mut page= Page::new(fm, markdown, PageType::General);
-                    println!("{:?}", path);
                     page.generate_slug(path, site)?;
                     pages.push(page);
                 },
 
                 None => {
-                    return Err(MangoError::Frontmatter("failed to generate frontmatter".into()));
+                    let msg = format!("failed to generate frontmatter for page {}", path.to_str().unwrap_or_default());
+                    return Err(MangoError::Frontmatter(msg));
                 }
             };                 
         }

@@ -2,10 +2,13 @@ use crate::{build::index::section::SectionIndex, render::template::{self, Render
 
 pub fn build(si: SectionIndex) -> Vec<RenderItem> {
     let mut items = Vec::new();
-    for (slug, pages) in si.sections {
-        let item = template::render_section_page(slug, pages);
-        items.push(item);
-    }
+
+    si.sections
+        .into_iter()
+        .for_each(|(s, p)| {
+            let item = template::render_section_page(s, p);
+            items.push(item);
+        });
 
     items
 }

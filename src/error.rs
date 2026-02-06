@@ -1,14 +1,16 @@
-#[derive(thiserror::Error, Debug)]
+use thiserror::Error;
+
+#[derive(Error, Debug)]
 pub enum MangoError {
-    #[error("IO error")]
+    #[error("Mango I/O Error")]
     Io(#[from] std::io::Error),
 
-    #[error("frontmatter error: {0}")]
+    #[error("Mango Frontmatter Error: {0}")]
     Frontmatter(String),
 
-    #[error("general error: {0}")]
+    #[error("Mango Error: {0}")]
     General(String),
 
-    #[error("template error")]
+    #[error("Mango Template Error")]
     Template(#[from] tera::Error)
 }

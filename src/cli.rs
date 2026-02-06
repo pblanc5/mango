@@ -1,8 +1,8 @@
-use std::path::Path;
+use std::{fs, path::Path};
 
 use clap::{Args, Parser, Subcommand};
 
-use crate::{build::{generate::{content, section}, index, output}, content::loader, error::MangoError, render::template};
+use crate::{build::{generate::{assets, content, section}, index, output}, content::loader, error::MangoError, render::template};
 
 #[derive(Args, Debug)]
 struct BuildOpts {
@@ -10,9 +10,9 @@ struct BuildOpts {
     #[arg(long, default_value = "meta/templates")]
     templates: String,
 
-    // path to themes
-    #[arg(long, default_value = "meta/themes")]
-    themes: String,
+    // path to assets
+    #[arg(long, default_value = "meta/assets")]
+    assets: String,
 
     // site directory name
     #[arg(long, default_value = "site")]
@@ -34,13 +34,26 @@ struct ServerOpts {
     port: u16
 }
 
+#[derive(Args, Debug)]
+struct CleanOpts {
+    // build directory
+    #[arg(short, long, default_value = "dist")]
+    dist: String,
+}
+
 #[derive(Subcommand, Debug)]
 enum MangoActions {
     // compile site
     Build(BuildOpts),
      
     // run site
-    Run(ServerOpts)
+    Run(ServerOpts),
+
+    // publish site
+    Publish,
+
+    // clean build directory
+    Clean(CleanOpts)
 }
 
 #[derive(Parser, Debug)]
@@ -61,7 +74,17 @@ pub fn run() -> Result<(), MangoError> {
         MangoActions::Run(opts) => {
             print!("{}:{}", opts.address, opts.port);
             Ok(())
-        }   
+        },
+
+        MangoActions::Publish => {
+            println!("publishing site");
+            Ok(())
+        },
+
+        MangoActions::Clean(opts) => {
+            let dist_path = Path::new(&opts.dist);
+            clean(dist_path)
+        }
     }
 }
 
@@ -69,6 +92,7 @@ fn build(project_path: &Path, opts: BuildOpts) -> Result<(), MangoError> {
     
     let site_path = project_path.join(&opts.site);
     let templates = Path::new(&opts.templates);
+    let assets = Path::new(&opts.assets);
     let dist = Path::new(&opts.output);
 
     let pages = loader::load(site_path.as_path())?;
@@ -81,5 +105,19 @@ fn build(project_path: &Path, opts: BuildOpts) -> Result<(), MangoError> {
     let sections = section::build(si);
     output::write(&tera, dist, sections)?;
 
+
+    let asset_base = assets.file_name()
+        .unwrap_or_default()
+        .to_str()
+        .unwrap_or_default();
+
+    let asset_dest = output::append_to_path(dist.to_path_buf(), asset_base);
+    assets::build(assets, &asset_dest)?;
+
+    Ok(())
+}
+
+fn clean(dist: &Path) -> Result<(), MangoError> {
+    fs::remove_dir_all(dist).map_err(MangoError::Io)?;
     Ok(())
 }
