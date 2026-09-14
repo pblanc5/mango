@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use chrono::NaiveDate;
 use serde::Serialize;
 use tera::Tera;
 
@@ -14,7 +15,8 @@ pub struct PageTemplate {
     pub title: String,
     pub author: String,
     pub description: String,
-    pub date: String,
+    #[serde(serialize_with = "crate::content::page::serialize_date")]
+    pub date: Option<NaiveDate>,
     pub tags: Vec<String>,
     pub content: String,
 }
@@ -38,7 +40,7 @@ impl From<&Page> for PageTemplate {
             title: page.title.clone(),
             author: page.author.clone(),
             description: page.description.clone(),
-            date: page.date.clone(),
+            date: page.date,
             tags: page.tags.clone(),
             content: String::new(),
         }
@@ -59,6 +61,8 @@ impl SectionTemplate {
 
 pub struct RenderItem {
     pub slug: String,
+    /// Human-readable origin, used in collision errors.
+    pub source: String,
     pub template: String,
     pub context: tera::Context,
 }
@@ -94,6 +98,7 @@ pub fn render_page(page: &Page) -> Result<RenderItem, MangoError> {
     let template = "page.html";
     Ok(RenderItem {
         slug: page.slug.clone(),
+        source: format!("page '{}'", page.slug),
         template: template.into(),
         context,
     })
@@ -106,6 +111,7 @@ pub fn render_section_page(slug: String, summaries: Vec<PageSummary>) -> RenderI
     context.insert("section", &template);
 
     RenderItem {
+        source: format!("section index '{}'", template.slug),
         slug: template.slug,
         template: "section.html".into(),
         context,
@@ -128,10 +134,32 @@ mod tests {
             tags: None,
             draft: false,
         };
-        let page = Page::new(fm, "# Hi".into(), PageType::General);
+        let page = Page::new(fm, "# Hi".into(), PageType::General).unwrap();
 
         let item = render_page(&page).unwrap();
         let ctx = item.context.get("page").expect("page context missing");
         assert_eq!(ctx["description"], "my first post");
+    }
+
+    // AC-1.5
+    #[test]
+    fn page_context_date_is_formatted_or_empty() {
+        let fm = |date: Option<&str>| MangoFrontmatter {
+            title: "Title".into(),
+            author: "Author".into(),
+            description: "d".into(),
+            date: date.map(String::from),
+            tags: None,
+            draft: false,
+        };
+        let dated = Page::new(fm(Some("2026-01-24")), String::new(), PageType::General).unwrap();
+        let undated = Page::new(fm(None), String::new(), PageType::General).unwrap();
+
+        let item = render_page(&dated).unwrap();
+        assert_eq!(item.context.get("page").unwrap()["date"], "2026-01-24");
+        assert_eq!(item.source, "page ''");
+
+        let item = render_page(&undated).unwrap();
+        assert_eq!(item.context.get("page").unwrap()["date"], "");
     }
 }

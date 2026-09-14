@@ -27,37 +27,37 @@ fn traverse(site: &Path, dir: &Path, pages: &mut Vec<Page>) -> Result<(), MangoE
         let entry = result.map_err(|e| MangoError::io_at(dir, e))?;
         let path = &entry.path();
 
-        if let Some(ext) = path.extension()
-            && ext == "md"
-        {
-            let content = fs::read_to_string(path).map_err(|e| MangoError::io_at(path, e))?;
-            let (frontmatter, markdown) = frontmatter::parse(content).map_err(|e| match e {
-                MangoError::Frontmatter(msg) => {
-                    MangoError::Frontmatter(format!("{}: {msg}", path.display()))
-                }
-                other => other,
-            })?;
-
-            match frontmatter {
-                Some(fm) => {
-                    let mut page = Page::new(fm, markdown, PageType::General);
-                    page.generate_slug(path, site)?;
-                    pages.push(page);
-                }
-
-                None => {
-                    let msg = format!(
-                        "failed to generate frontmatter for page {}",
-                        path.to_str().unwrap_or_default()
-                    );
-                    return Err(MangoError::Frontmatter(msg));
-                }
-            };
-        }
-
         if path.is_dir() {
             traverse(site, path, pages)?;
+            continue;
         }
+
+        if !path.is_file() || path.extension().is_none_or(|ext| ext != "md") {
+            continue;
+        }
+
+        let with_path = |e: MangoError| match e {
+            MangoError::Frontmatter(msg) => {
+                MangoError::Frontmatter(format!("{}: {msg}", path.display()))
+            }
+            other => other,
+        };
+
+        let content = fs::read_to_string(path).map_err(|e| MangoError::io_at(path, e))?;
+        let (frontmatter, markdown) = frontmatter::parse(content).map_err(with_path)?;
+
+        match frontmatter {
+            Some(fm) => {
+                let mut page = Page::new(fm, markdown, PageType::General).map_err(with_path)?;
+                page.generate_slug(path, site)?;
+                pages.push(page);
+            }
+
+            None => {
+                let msg = format!("failed to generate frontmatter for page {}", path.display());
+                return Err(MangoError::Frontmatter(msg));
+            }
+        };
     }
 
     Ok(())
@@ -166,5 +166,105 @@ mod tests {
         let err = load(&site).expect_err("malformed draft must still fail the load");
         assert!(matches!(err, MangoError::Frontmatter(_)), "{err:?}");
         assert!(err.to_string().contains("draft.md"), "{err}");
+    }
+
+    fn dated_page(title: &str, date: &str, draft: bool) -> String {
+        format!(
+            "---\n{{\"title\": \"{title}\", \"author\": \"a\", \"description\": \"d\", \"date\": {date}, \"draft\": {draft}}}\n---\nbody\n"
+        )
+    }
+
+    // AC-1.1
+    #[test]
+    fn valid_date_is_parsed() {
+        let site = fixture_dir("valid_date_is_parsed");
+        write_file(
+            &site.join("posts/one.md"),
+            &dated_page("One", "\"2026-01-24\"", false),
+        );
+        write_file(
+            &site.join("posts/leap.md"),
+            &dated_page("Leap", "\"2024-02-29\"", false),
+        );
+
+        let mut pages = load(&site).unwrap();
+        pages.sort_by(|a, b| a.slug.cmp(&b.slug));
+        assert_eq!(pages[0].date, chrono::NaiveDate::from_ymd_opt(2024, 2, 29));
+        assert_eq!(pages[1].date, chrono::NaiveDate::from_ymd_opt(2026, 1, 24));
+    }
+
+    fn assert_date_error(test_name: &str, value: &str, draft: bool) {
+        let site = fixture_dir(test_name);
+        let json_value = serde_json::to_string(value).unwrap();
+        write_file(
+            &site.join("posts/bad_date.md"),
+            &dated_page("Bad", &json_value, draft),
+        );
+
+        let err = load(&site).expect_err("invalid date must fail the load");
+        assert!(
+            matches!(err, MangoError::Frontmatter(_)),
+            "{value}: {err:?}"
+        );
+        let msg = err.to_string();
+        assert!(msg.contains("bad_date.md"), "{value}: {msg}");
+        assert!(msg.contains(&format!("'{value}'")), "{value}: {msg}");
+    }
+
+    // AC-1.2
+    #[test]
+    fn invalid_date_format_is_frontmatter_error_naming_file_and_value() {
+        let bad = [
+            "2026/01/24",
+            "2026-1-24",
+            "26-01-24",
+            "2026-01-24T10:00:00",
+            "+2026-01-24",
+            " 2026-01-24",
+            "",
+        ];
+        for (i, value) in bad.iter().enumerate() {
+            assert_date_error(&format!("invalid_date_format_{i}"), value, false);
+        }
+    }
+
+    // AC-1.3
+    #[test]
+    fn impossible_date_is_frontmatter_error_naming_file_and_value() {
+        for (i, value) in ["2026-02-30", "2026-13-01"].iter().enumerate() {
+            assert_date_error(&format!("impossible_date_{i}"), value, false);
+        }
+    }
+
+    // AC-1.4
+    #[test]
+    fn missing_or_null_date_is_undated() {
+        let site = fixture_dir("missing_or_null_date_is_undated");
+        write_file(&site.join("posts/missing.md"), &page("Missing", false));
+        write_file(
+            &site.join("posts/null.md"),
+            &dated_page("Null", "null", false),
+        );
+
+        let pages = load(&site).unwrap();
+        assert_eq!(pages.len(), 2);
+        assert!(pages.iter().all(|p| p.date.is_none()));
+    }
+
+    // AC-1.6
+    #[test]
+    fn invalid_date_in_draft_is_still_an_error() {
+        assert_date_error("invalid_date_in_draft", "2026-02-30", true);
+    }
+
+    // AC-6.1
+    #[test]
+    fn directory_named_md_is_traversed() {
+        let site = fixture_dir("directory_named_md_is_traversed");
+        write_file(&site.join("notes.md/inner.md"), &page("Inner", false));
+
+        let pages = load(&site).unwrap();
+        let slugs: Vec<_> = pages.iter().map(|p| p.slug.as_str()).collect();
+        assert_eq!(slugs, vec!["notes.md/inner"]);
     }
 }
