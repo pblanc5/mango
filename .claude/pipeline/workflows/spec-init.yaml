@@ -1,0 +1,17 @@
+name: spec-init
+description: One-time bootstrap for an existing project. Drafts the constitution and a system overview from the repo for approval.
+max_total_attempts: 6
+
+stages:
+  - id: constitution
+    persona: pipeline-spec-extractor
+    inputs: []
+    notes: Draft the project constitution.
+    publish_to: specs/constitution.md
+
+  - id: overview
+    persona: pipeline-spec-extractor
+    inputs: [constitution]
+    notes: Draft the system overview. Use the constitution draft for commands and conventions.
+    publish_to: specs/_system/overview.md
+    gate: human

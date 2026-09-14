@@ -1,0 +1,36 @@
+name: spec-feature
+description: Spec-driven feature. Requirements (critiqued), then design and tasks, are approved and published to specs/, then develop, test and review.
+max_total_attempts: 24
+context: [specs/constitution.md]
+
+stages:
+  - id: spec
+    persona: pipeline-spec-writer
+    inputs: []
+    publish_to: specs/{spec_id}/requirements.md
+
+  - id: spec-review
+    persona: pipeline-spec-critic
+    inputs: [spec]
+    on_changes_requested: { goto: spec, max_attempts: 2 }
+    gate: human
+
+  - id: design
+    persona: pipeline-architect
+    inputs: [spec]
+    publish_to: specs/{spec_id}/design.md
+    gate: human
+
+  - id: develop
+    persona: pipeline-developer
+    inputs: [spec, design]
+
+  - id: test
+    persona: pipeline-tester
+    inputs: [spec, design, develop]
+    on_fail: { goto: develop, max_attempts: 3 }
+
+  - id: review
+    persona: pipeline-reviewer
+    inputs: [spec, design, develop, test]
+    on_changes_requested: { goto: develop, max_attempts: 3 }

@@ -1,0 +1,23 @@
+name: feature
+description: Ship a feature end to end. The plan is approved once, then develop, test and review loop automatically.
+max_total_attempts: 16
+
+stages:
+  - id: plan
+    persona: pipeline-planner
+    inputs: []
+    gate: human
+
+  - id: develop
+    persona: pipeline-developer
+    inputs: [plan]
+
+  - id: test
+    persona: pipeline-tester
+    inputs: [plan, develop]
+    on_fail: { goto: develop, max_attempts: 3 }
+
+  - id: review
+    persona: pipeline-reviewer
+    inputs: [plan, develop, test]
+    on_changes_requested: { goto: develop, max_attempts: 3 }

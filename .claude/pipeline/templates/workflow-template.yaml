@@ -1,0 +1,76 @@
+# Workflow template for /run-workflow.
+# Copy to workflows/<name>.yaml, reinstall, then check it with: /run-workflow --list
+
+# Must match the file name (without .yaml).
+name: my-workflow
+
+# One line, shown by --list.
+description: What this workflow delivers and when to use it.
+
+# Hard cap on persona invocations in one run, counting every stage attempt.
+# Safety net in case a loop misbehaves. Rule of thumb: stages x 3.
+max_total_attempts: 12
+
+# Optional. Project files passed to every persona as context_files, e.g. the constitution.
+# A missing file is a warning, not an error.
+context: [specs/constitution.md]
+
+stages:
+  # APPROVAL RULE: the workflow needs at least one `gate: human` stage.
+  # Every stage up to and including the first gate must use a READ-ONLY persona:
+  # its tools: line lists none of Write, Edit, MultiEdit, NotebookEdit, Bash, PowerShell.
+  # A persona without a tools: line is treated as write-capable.
+  - id: plan                     # unique; lowercase-with-hyphens
+    persona: pipeline-planner    # subagent name; must exist in .claude/agents/ or ~/.claude/agents/
+    inputs: []                   # ids of EARLIER stages whose latest artifact this stage reads
+    gate: human                  # pause after a pass; explicit user approval required to continue
+
+  # Spec-driven example: a read-only author and critic loop BEFORE the user is asked.
+  # - id: spec
+  #   persona: pipeline-spec-writer
+  #   inputs: []
+  #   publish_to: specs/{spec_id}/requirements.md   # published when the next gate is approved
+  # - id: spec-review
+  #   persona: pipeline-spec-critic
+  #   inputs: [spec]
+  #   on_changes_requested: { goto: spec, max_attempts: 2 }
+  #   gate: human                                   # shows spec + critique together; approval publishes requirements.md
+
+  # Specialized persona slotted in after planning. Approval at this gate covers everything after it until the next gate.
+  # - id: ui-design
+  #   persona: pipeline-ui-designer
+  #   inputs: [plan]
+  #   gate: human
+  #   notes: Produce component structure and states; no code.
+
+  - id: develop
+    persona: pipeline-developer
+    inputs: [plan]
+
+  - id: test
+    persona: pipeline-tester
+    inputs: [plan, develop]
+    # On verdict "fail": go back to a stage (same or earlier) and continue forward from there.
+    # The failing artifact becomes that stage's `feedback`.
+    # max_attempts = how many times this loop may fire before the run stops.
+    on_fail: { goto: develop, max_attempts: 3 }
+
+  - id: review
+    persona: pipeline-reviewer
+    inputs: [plan, develop, test]
+    # On verdict "changes-requested". Looping to develop re-runs test before review again.
+    on_changes_requested: { goto: develop, max_attempts: 3 }
+    notes: Optional extra instructions passed to the persona as stage_notes.
+
+# publish_to (optional, any stage):
+#   - Relative path inside the project; not under .claude/ or .dev-pipeline/.
+#   - Placeholders: {spec_id} (from the artifact's frontmatter) and {run_id}.
+#   - Published when the next gate at or after the stage is approved. Only the document above "## Pipeline notes" is published.
+#   - If the target file changed during the run, the orchestrator asks before overwriting.
+#
+# Verdict handling applied to every stage:
+#   pass               -> next stage (or pause if gate: human; or finish if last)
+#   fail               -> on_fail, else stop
+#   changes-requested  -> on_changes_requested, else stop
+#   blocked            -> stop and ask the user
+#   scope_change: true -> stop; resuming returns to the stages of the most recent gate (or use --from <stage>)
