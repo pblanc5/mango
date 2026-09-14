@@ -1,14 +1,17 @@
+mod build;
 mod cli;
 mod content;
-mod render;
-mod build;
 mod error;
+mod render;
 
-fn main() {
+use std::process::ExitCode;
+
+fn main() -> ExitCode {
     match cli::run() {
-        Ok(_) => (),
+        Ok(_) => ExitCode::SUCCESS,
         Err(e) => {
-            println!("{}", e)
+            eprintln!("{e}");
+            ExitCode::FAILURE
         }
     }
 }

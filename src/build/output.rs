@@ -3,20 +3,17 @@ use tera::Tera;
 
 use crate::{error::MangoError, render::template::RenderItem};
 
-pub fn write(tera: &Tera, dist:  &Path, render_items: Vec<RenderItem>) -> Result<(), MangoError> {
-
+pub fn write(tera: &Tera, dist: &Path, render_items: Vec<RenderItem>) -> Result<(), MangoError> {
     for item in render_items {
         let path = get_final_path(dist, &item.slug);
 
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(MangoError::Io)?;
+            std::fs::create_dir_all(parent).map_err(|e| MangoError::io_at(parent, e))?;
         }
 
-        let content= tera.render(&item.template, &item.context)?;
+        let content = tera.render(&item.template, &item.context)?;
 
-        std::fs::write(path, content)
-            .map_err(MangoError::Io)?;
+        std::fs::write(&path, content).map_err(|e| MangoError::io_at(&path, e))?;
     }
 
     Ok(())
@@ -41,8 +38,7 @@ pub fn append_to_path(path: PathBuf, addition: &str) -> PathBuf {
     if !addition.starts_with("/") {
         path.push("/");
     }
-    
+
     path.push(addition);
     path.into()
 }
-

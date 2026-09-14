@@ -6,7 +6,7 @@ use crate::content::page::Page;
 pub struct PageSummary {
     pub title: String,
     pub date: String,
-    pub slug: String
+    pub slug: String,
 }
 
 impl From<&Page> for PageSummary {
@@ -14,7 +14,7 @@ impl From<&Page> for PageSummary {
         PageSummary {
             title: page.title.clone(),
             date: page.date.clone(),
-            slug: page.slug.clone()
+            slug: page.slug.clone(),
         }
     }
 }

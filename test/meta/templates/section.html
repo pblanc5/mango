@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>{{ section.slug }}</h1>
+
+<ul class="section-list">
+{% for page in section.pages %}
+  <li>
+    <a href="/{{ page.slug }}/">{{ page.title }}</a>
+  </li>
+{% endfor %}
+</ul>
+{% endblock content %}
