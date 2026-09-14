@@ -54,6 +54,16 @@ impl Page {
     }
 }
 
+/// Root-relative URL for a page or section slug: `"/<slug>/"`, or `"/"` for
+/// the empty (home) slug.
+pub fn slug_url(slug: &str) -> String {
+    if slug.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{slug}/")
+    }
+}
+
 /// Parses a strict `YYYY-MM-DD` date. chrono's `parse_from_str` accepts
 /// unpadded and signed fields, so the shape is checked by hand first.
 pub fn parse_date(value: &str) -> Result<NaiveDate, MangoError> {
@@ -129,6 +139,14 @@ mod tests {
         let result = page.generate_slug(Path::new("elsewhere/post.md"), Path::new("site"));
 
         assert!(matches!(result, Err(MangoError::General(_))));
+    }
+
+    // AC-5.1, AC-5.3, AC-5.5
+    #[test]
+    fn slug_url_is_root_relative_with_trailing_slash() {
+        assert_eq!(slug_url("posts/post_one"), "/posts/post_one/");
+        assert_eq!(slug_url("posts"), "/posts/");
+        assert_eq!(slug_url(""), "/");
     }
 
     // AC-1.1

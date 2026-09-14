@@ -3,10 +3,20 @@
 {% block content %}
 <h1>{{ section.slug }}</h1>
 
+{% if section.subsections %}
+<ul class="subsection-list">
+{% for sub in section.subsections %}
+  <li>
+    <a href="{{ sub.url | safe }}">{{ sub.slug }}</a>
+  </li>
+{% endfor %}
+</ul>
+{% endif %}
+
 <ul class="section-list">
 {% for page in section.pages %}
   <li>
-    <a href="/{{ page.slug }}/">{{ page.title }}</a>
+    <a href="{{ page.url | safe }}">{{ page.title }}</a>
   </li>
 {% endfor %}
 </ul>

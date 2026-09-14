@@ -146,6 +146,8 @@ fn build_generates_site_from_fixture() {
             "test/meta/assets",
             "-o",
             out.to_str().unwrap(),
+            "--config",
+            "test/mango.json",
         ],
         &root,
     );
@@ -157,6 +159,7 @@ fn build_generates_site_from_fixture() {
     );
 
     let expected = [
+        "index.html",
         "posts/post_one/index.html",
         "posts/post_two/index.html",
         "posts/test/index.html",
@@ -205,6 +208,304 @@ fn build_generates_site_from_fixture() {
         offsets[0] < offsets[1] && offsets[1] < offsets[2],
         "posts index must list Post One, Post Two, Test Page in order, got:\n{index}"
     );
+
+    // AC-5.4 (batch 3)
+    assert!(index.contains(r#"href="/posts/post_one/""#), "{index}");
+    assert!(!index.contains("&#x2F;"), "{index}");
+
+    // AC-1.14 (batch 3)
+    assert!(
+        between(&page, "<title>", "</title>").contains("Mango Test Site"),
+        "configured title missing from <title>:\n{page}"
+    );
+    assert!(
+        between(&page, "<footer>", "</footer>").contains("Mango Tester"),
+        "configured author missing from <footer>:\n{page}"
+    );
+
+    // AC-2.7 (batch 3)
+    let home = fs::read_to_string(out.join("index.html")).unwrap();
+    assert!(
+        home.contains("<!DOCTYPE html>"),
+        "home must extend base:\n{home}"
+    );
+    let tracker = home.find("Mango Task Tracker").expect(&home);
+    let post_one = home.find("Post One").expect(&home);
+    assert!(tracker < post_one, "newest page must come first:\n{home}");
+    assert!(home.contains(r#"href="/posts/""#), "{home}");
+    assert!(home.contains(r#"href="/projects/mango/""#), "{home}");
+}
+
+/// Text between the first `start` and the following `end` marker.
+fn between<'a>(html: &'a str, start: &str, end: &str) -> &'a str {
+    let from = html
+        .find(start)
+        .unwrap_or_else(|| panic!("'{start}' missing from:\n{html}"))
+        + start.len();
+    let len = html[from..]
+        .find(end)
+        .unwrap_or_else(|| panic!("'{end}' missing from:\n{html}"));
+    &html[from..from + len]
+}
+
+/// Like `build_temp_site`, but passes `--config <config>`.
+fn build_temp_site_with_config(site: &Path, out: &Path, config: &Path) -> Output {
+    let root = root();
+    run_mango(
+        &[
+            "build",
+            "--site",
+            site.to_str().unwrap(),
+            "--templates",
+            root.join("test/meta/templates").to_str().unwrap(),
+            "--assets",
+            root.join("test/meta/assets").to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+            "--config",
+            config.to_str().unwrap(),
+        ],
+        &root,
+    )
+}
+
+// AC-1.2
+#[test]
+fn build_without_config_uses_defaults() {
+    let dir = temp_dir("build_without_config_uses_defaults");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    write_file(&site.join("posts/one.md"), &page("One", false));
+
+    let output = build_temp_site(&site, &out);
+
+    assert_success(&output);
+    for file in ["posts/one/index.html", "index.html"] {
+        let html = fs::read_to_string(out.join(file)).unwrap();
+        assert!(
+            between(&html, "<title>", "</title>").contains("My Site"),
+            "{file}:\n{html}"
+        );
+    }
+}
+
+// AC-1.3
+#[test]
+fn build_reads_default_mango_json_from_cwd() {
+    let dir = temp_dir("build_reads_default_mango_json_from_cwd");
+    default_layout_project(&dir);
+    write_file(
+        &dir.join("mango.json"),
+        r#"{"title": "Default Json Title", "author": "Default Json Author"}"#,
+    );
+
+    let output = run_mango(&["build"], &dir);
+
+    assert_success(&output);
+    let html = fs::read_to_string(dir.join("dist/posts/one/index.html")).unwrap();
+    assert!(
+        between(&html, "<title>", "</title>").contains("Default Json Title"),
+        "{html}"
+    );
+    assert!(
+        between(&html, "<footer>", "</footer>").contains("Default Json Author"),
+        "{html}"
+    );
+}
+
+// AC-1.4
+#[test]
+fn build_fails_when_explicit_config_missing() {
+    let dir = temp_dir("build_fails_when_explicit_config_missing");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    let config = dir.join("missing.json");
+    write_file(&site.join("posts/one.md"), &page("One", false));
+    write_file(&out.join("marker.txt"), "keep me");
+    let before = snapshot(&out);
+
+    let output = build_temp_site_with_config(&site, &out, &config);
+
+    assert_failure(&output, "explicit missing config");
+    assert!(
+        stderr(&output).contains(config.to_str().unwrap()),
+        "{}",
+        stderr(&output)
+    );
+    assert_eq!(snapshot(&out), before, "output changed");
+}
+
+// AC-1.5, AC-1.6
+#[test]
+fn build_fails_on_malformed_or_unknown_field_config() {
+    let dir = temp_dir("build_fails_on_malformed_or_unknown_field_config");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    write_file(&site.join("posts/one.md"), &page("One", false));
+    write_file(&out.join("marker.txt"), "keep me");
+    let before = snapshot(&out);
+
+    let malformed = "{not valid json";
+    let serde_msg = serde_json::from_str::<serde_json::Value>(malformed)
+        .unwrap_err()
+        .to_string();
+
+    for (name, content, expected) in [
+        ("malformed.json", malformed, serde_msg.as_str()),
+        ("unknown.json", r#"{"titel": "Typo"}"#, "titel"),
+    ] {
+        let config = dir.join(name);
+        write_file(&config, content);
+
+        let output = build_temp_site_with_config(&site, &out, &config);
+
+        assert_failure(&output, name);
+        let err = stderr(&output);
+        assert!(err.contains("Mango Config Error"), "{name}: {err}");
+        assert!(err.contains(config.to_str().unwrap()), "{name}: {err}");
+        assert!(err.contains(expected), "{name}: {err}");
+        assert_eq!(snapshot(&out), before, "{name}: output changed");
+    }
+}
+
+// AC-1.8
+#[test]
+fn config_error_reported_before_templates_error() {
+    let dir = temp_dir("config_error_reported_before_templates_error");
+    let site = dir.join("site");
+    let config = dir.join("bad.json");
+    write_file(&site.join("posts/one.md"), &page("One", false));
+    write_file(&config, "{not valid json");
+
+    let output = run_mango(
+        &[
+            "build",
+            "--site",
+            site.to_str().unwrap(),
+            "--templates",
+            dir.join("no-templates").to_str().unwrap(),
+            "--assets",
+            root().join("test/meta/assets").to_str().unwrap(),
+            "-o",
+            dir.join("dist").to_str().unwrap(),
+            "--config",
+            config.to_str().unwrap(),
+        ],
+        &root(),
+    );
+
+    assert_failure(&output, "bad config and missing templates");
+    let err = stderr(&output);
+    assert!(err.contains("Mango Config Error"), "{err}");
+    assert!(!err.contains("no-templates"), "{err}");
+}
+
+// AC-1.12
+#[test]
+fn build_refuses_output_containing_config() {
+    let dir = temp_dir("build_refuses_output_containing_config");
+    default_layout_project(&dir);
+    write_file(&dir.join("out/mango.json"), r#"{"title": "T"}"#);
+    write_file(&dir.join("out/marker.txt"), "keep me");
+    let before = snapshot(&dir);
+
+    let output = run_mango(&["build", "--config", "out/mango.json", "-o", "out"], &dir);
+
+    assert_failure(&output, "output contains config");
+    let err = stderr(&output);
+    assert!(err.contains("'out'"), "{err}");
+    assert!(err.contains("'out/mango.json'"), "{err}");
+    assert_eq!(snapshot(&dir), before, "files were changed");
+}
+
+// AC-2.2
+#[test]
+fn home_recent_respects_recent_count_and_skips_undated() {
+    let dir = temp_dir("home_recent_respects_recent_count_and_skips_undated");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    let config = dir.join("mango.json");
+    write_file(
+        &site.join("posts/old.md"),
+        &dated_page("Oldest Page", "2020-01-01"),
+    );
+    write_file(
+        &site.join("posts/mid.md"),
+        &dated_page("Middle Page", "2025-06-01"),
+    );
+    write_file(
+        &site.join("notes/new.md"),
+        &dated_page("Newest Page", "2026-03-01"),
+    );
+    write_file(&site.join("posts/undated.md"), &page("Undated Page", false));
+    write_file(&config, r#"{"recent_count": 2}"#);
+
+    let output = build_temp_site_with_config(&site, &out, &config);
+
+    assert_success(&output);
+    let home = fs::read_to_string(out.join("index.html")).unwrap();
+    let newest = home.find("Newest Page").expect(&home);
+    let middle = home.find("Middle Page").expect(&home);
+    assert!(newest < middle, "{home}");
+    assert!(!home.contains("Oldest Page"), "{home}");
+    assert!(!home.contains("Undated Page"), "{home}");
+}
+
+// AC-2.6
+#[test]
+fn missing_home_template_keeps_previous_output() {
+    let (site, templates, assets, out) =
+        built_site_with_private_templates("missing_home_template_keeps_previous_output");
+    assert!(out.join("index.html").is_file());
+    let before = snapshot(&out);
+
+    fs::remove_file(templates.join("home.html")).unwrap();
+    let output = build_with(&site, &templates, &assets, &out);
+
+    assert_failure(&output, "missing home.html");
+    assert!(stderr(&output).contains("home.html"), "{}", stderr(&output));
+    assert_previous_output_intact(&out);
+    assert_eq!(snapshot(&out), before);
+}
+
+// AC-3.5, AC-5.3
+#[test]
+fn build_generates_ancestor_section_indexes() {
+    let dir = temp_dir("build_generates_ancestor_section_indexes");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    write_file(&site.join("a/b/c.md"), &page("Deep Page", false));
+
+    let output = build_temp_site(&site, &out);
+
+    assert_success(&output);
+    let a = fs::read_to_string(out.join("a/index.html")).unwrap();
+    assert!(a.contains(r#"href="/a/b/""#), "{a}");
+    let ab = fs::read_to_string(out.join("a/b/index.html")).unwrap();
+    assert!(ab.contains(r#"href="/a/b/c/""#), "{ab}");
+    let home = fs::read_to_string(out.join("index.html")).unwrap();
+    assert!(home.contains(r#"href="/a/""#), "{home}");
+}
+
+// AC-3.6
+#[test]
+fn build_fails_on_page_and_ancestor_section_collision() {
+    let dir = temp_dir("build_fails_on_page_and_ancestor_section_collision");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    write_file(&site.join("a.md"), &page("A Page", false));
+    write_file(&site.join("a/b/c.md"), &page("Deep", false));
+    write_file(&out.join("marker.txt"), "keep me");
+
+    let output = build_temp_site(&site, &out);
+
+    assert_failure(&output, "ancestor collision");
+    let err = stderr(&output);
+    let collided = out.join("a").join("index.html");
+    assert!(err.contains(collided.to_str().unwrap()), "{err}");
+    assert!(err.contains("page 'a'"), "{err}");
+    assert!(err.contains("section index 'a'"), "{err}");
+    assert_eq!(snapshot(&out), vec!["marker.txt".to_string()]);
 }
 
 // AC-1.5, AC-2.4 (batch 1); AC-6.2
@@ -733,6 +1034,9 @@ fn help_shows_flag_descriptions() {
         "Path to the assets directory",
         "Path to the site content directory",
         "Output directory for the built site",
+        "Path to the site config file",
+        "mango.json",
+        "--config",
     ] {
         assert!(build_help.contains(text), "missing '{text}':\n{build_help}");
     }

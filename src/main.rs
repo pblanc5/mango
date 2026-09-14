@@ -1,5 +1,6 @@
 mod build;
 mod cli;
+mod config;
 mod content;
 mod error;
 mod render;

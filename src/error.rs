@@ -19,6 +19,9 @@ pub enum MangoError {
     #[error("Mango Error: {0}")]
     General(String),
 
+    #[error("Mango Config Error: {0}")]
+    Config(String),
+
     #[error("Mango Template Error: {}", tera_chain(.0))]
     Template(#[from] tera::Error),
 }
@@ -80,5 +83,12 @@ mod tests {
         let msg = MangoError::from(tera_err).to_string();
         assert!(msg.contains("Failed to render 'page.html'"), "{msg}");
         assert!(msg.contains("Variable `x` not found"), "{msg}");
+    }
+
+    // AC-1.13
+    #[test]
+    fn config_display() {
+        let err = MangoError::Config("bad config".into());
+        assert_eq!(err.to_string(), "Mango Config Error: bad config");
     }
 }

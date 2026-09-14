@@ -8,9 +8,10 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::{
     build::{
-        generate::{assets, content, section},
+        generate::{assets, content, home, section},
         index, output,
     },
+    config,
     content::loader,
     error::MangoError,
     render::template,
@@ -33,6 +34,10 @@ struct BuildOpts {
     /// Output directory for the built site
     #[arg(short, long, default_value = "dist")]
     output: String,
+
+    /// Path to the site config file (default: mango.json)
+    #[arg(long)]
+    config: Option<String>,
 }
 
 // The dev server is future work; the options are kept so the CLI surface
@@ -105,10 +110,17 @@ fn build(project_path: &Path, opts: BuildOpts) -> Result<(), MangoError> {
     let templates = Path::new(&opts.templates);
     let assets = Path::new(&opts.assets);
     let dist = Path::new(&opts.output);
+    let config_explicit = opts.config.is_some();
+    let config_path = Path::new(
+        opts.config
+            .as_deref()
+            .unwrap_or(config::DEFAULT_CONFIG_PATH),
+    );
 
     // Everything that can fail on bad input happens before the output
     // folder is touched, so a failed build leaves the previous output intact.
     let pages = loader::load(site_path.as_path())?;
+    let config = config::load(config_path, config_explicit)?;
     let tera = template::load_templates(templates)?;
 
     let asset_dest = match assets.file_name() {
@@ -122,21 +134,36 @@ fn build(project_path: &Path, opts: BuildOpts) -> Result<(), MangoError> {
         }
     };
 
-    let page_items = content::build(&pages)?;
+    let page_items = content::build(&pages, &config)?;
     let si = index::section::build_section_index(&pages);
-    let section_items = section::build(si);
+    // The home item reads the index, so build it before `section::build`
+    // consumes it.
+    let home_items = [home::build(&pages, &si, &config)];
+    let section_items = section::build(si, &config);
 
-    output::check_collisions(dist, page_items.iter().chain(section_items.iter()))?;
+    output::check_collisions(
+        dist,
+        page_items
+            .iter()
+            .chain(section_items.iter())
+            .chain(home_items.iter()),
+    )?;
 
     let rendered_pages = output::render(&tera, dist, &page_items)?;
     let rendered_sections = output::render(&tera, dist, &section_items)?;
+    let rendered_home = output::render(&tera, dist, &home_items)?;
 
     let cwd = current_dir()?;
-    ensure_safe_to_clean(dist, &cwd, &[site_path.as_path(), templates, assets])?;
+    ensure_safe_to_clean(
+        dist,
+        &cwd,
+        &[site_path.as_path(), templates, assets, config_path],
+    )?;
     clean_contents(dist)?;
 
     output::write(&rendered_pages)?;
     output::write(&rendered_sections)?;
+    output::write(&rendered_home)?;
 
     assets::build(assets, &asset_dest)?;
 
@@ -225,8 +252,13 @@ fn clean_contents(dist: &Path) -> Result<(), MangoError> {
 
         if file_type.is_dir() {
             fs::remove_dir_all(&path).map_err(|e| MangoError::io_at(&path, e))?;
-        } else {
-            fs::remove_file(&path).map_err(|e| MangoError::io_at(&path, e))?;
+        } else if let Err(e) = fs::remove_file(&path) {
+            // On Windows a symlink to a directory must be removed with
+            // `remove_dir`; it still removes only the link.
+            if !file_type.is_symlink() {
+                return Err(MangoError::io_at(&path, e));
+            }
+            fs::remove_dir(&path).map_err(|e| MangoError::io_at(&path, e))?;
         }
     }
 
@@ -251,16 +283,19 @@ mod tests {
         fs::write(path, content).unwrap();
     }
 
-    // AC-4.4
+    // AC-4.4; AC-6.2 (batch 3): a non-canonical target, so the message can
+    // be seen to name both the output path and the cwd.
     #[test]
     fn refuses_cwd() {
         let dir = fixture_dir("refuses_cwd");
-        let err = ensure_safe_to_clean(&dir, &dir, &[]).expect_err("cwd must be refused");
+        fs::create_dir_all(dir.join("child")).unwrap();
+        let target = dir.join("child/..");
+
+        let err = ensure_safe_to_clean(&target, &dir, &[]).expect_err("cwd must be refused");
         assert!(matches!(err, MangoError::General(_)), "{err:?}");
-        assert!(
-            err.to_string().contains(&dir.display().to_string()),
-            "{err}"
-        );
+        let msg = err.to_string();
+        assert!(msg.contains(&format!("'{}'", target.display())), "{msg}");
+        assert!(msg.contains(&format!("'{}'", dir.display())), "{msg}");
     }
 
     // AC-4.5
@@ -350,5 +385,28 @@ mod tests {
             outside.join("keep.txt").is_file(),
             "symlink target must not be followed"
         );
+    }
+
+    // AC-6.3: on Windows a directory symlink can't be removed with
+    // `remove_file`. Skips when the process may not create symlinks.
+    #[cfg(windows)]
+    #[test]
+    fn clean_contents_removes_dir_symlink() {
+        let dir = fixture_dir("clean_contents_removes_dir_symlink");
+        let dist = dir.join("dist");
+        let outside = dir.join("outside");
+        write_file(&outside.join("keep.txt"), "keep");
+        fs::create_dir_all(&dist).unwrap();
+
+        if let Err(e) = std::os::windows::fs::symlink_dir(&outside, dist.join("link")) {
+            eprintln!("skipping: cannot create directory symlink: {e}");
+            return;
+        }
+
+        clean_contents(&dist).unwrap();
+
+        assert!(dist.is_dir());
+        assert_eq!(fs::read_dir(&dist).unwrap().count(), 0);
+        assert!(outside.join("keep.txt").is_file());
     }
 }

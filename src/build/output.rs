@@ -137,6 +137,27 @@ mod tests {
         check_collisions(Path::new("dist"), pages.iter().chain(sections.iter())).unwrap();
     }
 
+    // AC-2.1, AC-2.5 (batch 3)
+    #[test]
+    fn home_slug_maps_to_root_index() {
+        let dist = Path::new("dist");
+        let home = item("", "home page", "t.html");
+        assert_eq!(get_final_path(dist, &home.slug), dist.join("index.html"));
+
+        let pages = [page("posts/one")];
+        let sections = [section("posts")];
+        check_collisions(dist, pages.iter().chain(sections.iter()).chain([&home])).unwrap();
+
+        let other = item("", "other root", "t.html");
+        let err = check_collisions(dist, [&home, &other]).expect_err("two root items collide");
+        let msg = err.to_string();
+        assert!(
+            msg.contains(&dist.join("index.html").display().to_string()),
+            "{msg}"
+        );
+        assert!(msg.contains("home page"), "{msg}");
+    }
+
     // AC-9.1
     #[test]
     fn render_returns_paths_and_html_without_touching_fs() {
