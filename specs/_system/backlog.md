@@ -1,0 +1,181 @@
+# Backlog
+
+Tracked improvements for mango. Each item can be handed to the dev pipeline as-is: `/spec-feature specs/_system/backlog.md#arch-1` for design-heavy work, `/ship-feature` for local changes. When an item is picked up, set its status to `in progress` and link the spec; when it is merged, set `done` with the commit.
+
+Statuses: `open`, `in progress`, `done`, `dropped`. Sizes: **S** (one module, under a day), **M** (a few modules), **L** (cross-cutting).
+
+## Index
+
+| ID | Title | Priority | Size | Workflow | Depends on | Status |
+|---|---|---|---|---|---|---|
+| [ARCH-1](#arch-1) | Split the build into plan and commit; add `lib.rs` | high | L | `/spec-feature` | — | open |
+| [ARCH-2](#arch-2) | One output model instead of three | high | L | `/spec-feature` | ARCH-1, ARCH-3 | open |
+| [ARCH-3](#arch-3) | `Slug` and `Tag` newtypes | high | M | `/spec-feature` | — | open |
+| [ARCH-4](#arch-4) | Structured error variants instead of `General(String)` | medium | M | `/ship-feature` | — | open |
+| [ARCH-5](#arch-5) | Break up `render/template.rs` | medium | M | `/ship-feature` | ARCH-2 (easier after) | open |
+| [ARCH-6](#arch-6) | Tidy the `Page` model | medium | S | `/ship-feature` | — | open |
+| [ARCH-7](#arch-7) | Smaller cleanups: frontmatter return type, CLI path types | low | S | `/ship-feature` | — | open |
+| [OPS-1](#ops-1) | Continuous integration | medium | S | `/ship-feature` | a git remote | open |
+| [SPEC-1](#spec-1) | Confirm the constitution's open proposals | medium | S | manual | — | open |
+| [RISK-1](#risk-1) | Symlink loops in the site folder | medium | S | `/ship-feature` | — | open |
+| [RISK-2](#risk-2) | Symlinked folders inside the assets folder | medium | S | `/ship-feature` | — | open |
+| [RISK-3](#risk-3) | Raw HTML in content is trusted but undocumented | low | S | `/ship-feature` | — | open |
+| [RISK-4](#risk-4) | Unknown frontmatter keys are silently ignored | medium | S | `/spec-feature` | — | open |
+| [TEST-1](#test-1) | No test for CRLF line endings | low | S | `/ship-feature` | — | open |
+| [DOC-1](#doc-1) | Stale line references in the system overview | low | S | `/ship-feature` | — | open |
+
+Recommended order: ARCH-1 → ARCH-3 → ARCH-2, then ARCH-4 to ARCH-7 in any order. The RISK and TEST items are independent and can be done at any time.
+
+---
+
+## Architecture
+
+Source: architecture review of 2026-09-14 (commit `8f2eec7`). The review found the core design sound (stage-per-module layout, the `RenderItem` seam, view models separate from `Page`, a single error type); these items address where that design has been stretched rather than extended.
+
+### ARCH-1
+**Split the build into plan and commit; add `lib.rs`** · high · L · `/spec-feature` · open
+
+**Problem.** `cli::build` (`src/cli.rs`) parses paths, loads, indexes, generates, checks collisions, renders, checks safety, cleans and writes in one function of about 80 lines. The project's most important guarantee, that nothing touches the output folder until everything has succeeded, is enforced only by statement order and a comment; a new line in the wrong place silently breaks it. There is no library crate, so the pipeline can only be tested by spawning the binary, which is why `tests/build.rs` is about 1,900 lines.
+
+**Proposal.**
+```rust
+// src/lib.rs
+pub fn plan(opts: &BuildOptions) -> Result<BuildPlan, MangoError>;   // load, render, check; no writes
+pub fn commit(plan: BuildPlan, dist: &Path) -> Result<(), MangoError>; // safety check, clean, write, copy
+```
+`main.rs` parses arguments and calls the library. `BuildPlan` holds every output, fully rendered, plus the paths the safety check must protect.
+
+**Done when.**
+- The only way to write output is `commit(BuildPlan)`, and a `BuildPlan` can only come from a successful `plan`.
+- `cli.rs` contains argument parsing and dispatch only.
+- At least the collision, ordering and draft behaviors are tested in-process against `plan`, without spawning the binary; E2E tests keep covering exit codes and stderr.
+- All existing tests pass; CLAUDE.md's pipeline description is updated.
+
+**Also enables.** The future `run` dev server can call `plan` on every change; parallel rendering becomes a local change.
+
+### ARCH-2
+**One output model instead of three** · high · L · `/spec-feature` · depends on ARCH-1, ARCH-3 · open
+
+**Problem.** Outputs come in three shapes: `RenderItem` (slug + template + context), `GeneratedFile` (path + text) and `AssetFile` (source → destination). `check_collisions`, rendering and writing each handle the three separately. Two symptoms: `source: String` is a free-text label that exists only for error messages, and `page_date: Option<NaiveDate>` was bolted onto `RenderItem` so the sitemap could find `lastmod`.
+
+**Proposal.**
+```rust
+enum ItemKind { Page { date: Option<NaiveDate> }, Section, Home, TagIndex, Tag(Tag), Feed, Sitemap, Asset }
+enum Body { Template { name: &'static str, context: tera::Context }, Text(String), Copy(PathBuf) }
+struct Output { path: OutputPath, kind: ItemKind, body: Body }
+```
+Collision labels become `Display for ItemKind`; the sitemap selects `ItemKind::Page { date }`; collision checking, rendering and writing each work over one `Vec<Output>`.
+
+**Done when.**
+- `RenderItem`, `GeneratedFile` and `AssetFile` are replaced by one type; `source` strings and `page_date` are gone.
+- Collision error messages are unchanged (existing tests pass without edits to their expected text).
+- The sitemap no longer depends on a field that exists only for it.
+
+### ARCH-3
+**`Slug` and `Tag` newtypes** · high · M · `/spec-feature` · open
+
+**Problem.** Slugs are plain `String`s and their logic is spread across five files: construction and validation in `content/page.rs` (`generate_slug`, `slug_url`, `tag_slug`), path building in `build/output.rs` (`get_final_path`), parent lookup in `build/index/section.rs` (`extract_parent_slug` with `rsplit_once`), top-level detection in `build/generate/home.rs` (`!slug.contains('/')`), and URL building in `render/template.rs` (five `slug_url` calls). Tags are `String`s validated once and then trusted by convention.
+
+**Proposal.** A `Slug` type, only constructible through validation, with `parent()`, `is_top_level()`, `segments()`, `url()` and `output_path(dist)`; a `Tag` type constructed by `validate_tags`, with `url()` and `slug()`.
+
+**Done when.**
+- No module outside the `Slug`/`Tag` implementation splits, joins or formats slug strings.
+- An invalid slug or tag cannot be constructed.
+- Template contexts and output are byte-identical (the fixture and determinism tests pass unchanged).
+
+### ARCH-4
+**Structured error variants instead of `General(String)`** · medium · M · `/ship-feature` · open
+
+**Problem.** `MangoError::General(String)` covers collisions, invalid file names, clean-safety refusals, a missing templates folder and unimplemented commands. Messages are built with `format!` at each call site, and the loader prepends file paths with a `with_path` closure. Tests therefore assert on substrings of stderr.
+
+**Proposal.** Variants such as `Collision { path, first, second }`, `FileConflict { path, file, dir }`, `InvalidFileName { path, segment }`, `UnsafeClean { target, reason }`, `NotADirectory { path }`, `NotImplemented { command }`, and `Frontmatter { path, reason }` carrying the path. Keep the `io_at` pattern, which already works this way.
+
+**Done when.**
+- `General` is removed or used only for truly uncategorized errors.
+- Every message's wording lives in `src/error.rs`.
+- Unit tests match on variants; E2E tests still check that stderr names the file and value.
+
+### ARCH-5
+**Break up `render/template.rs`** · medium · M · `/ship-feature` · easier after ARCH-2 · open
+
+**Problem.** The largest source file (about 280 non-test lines) does four jobs: loading Tera, defining every view model, constructing every `RenderItem`, and running markdown (`render_page` calls `to_html`). `RenderItem` is a build-output concept, but `build` depends on `render` for it. Small smells: `PageTemplate::add_content` rebuilds the whole struct to set one field, and `use tera::Context;` is repeated inside each constructor.
+
+**Proposal.** `render/context.rs` for view models, `render/template.rs` for Tera loading only, item construction moved into `build/generate/*`, the output type moved into `build/` (or replaced by ARCH-2's `Output`).
+
+**Done when.** Each file has one job, `build` no longer imports its core type from `render`, and output is byte-identical.
+
+### ARCH-6
+**Tidy the `Page` model** · medium · S · `/ship-feature` · open
+
+**Problem.**
+- `PageType::General` is the only variant and nothing reads `Page.kind`; under the no-dead-code rule it should go until a second page type exists.
+- Construction is two-phase: `Page::new` leaves `slug` empty and `generate_slug(&mut self)` fills it in later, so a `Page` without a slug can exist.
+- `compare_summaries` (the listing order) lives in `build/index/section.rs` but is used by sections, tags, the home page and the feed; it is a content rule.
+- `home::recent_pages` builds `PageSummary`s only to sort them, then discards them, and `feed::build` re-checks `page.date` with an unreachable `continue`.
+
+**Proposal.** Remove `PageType`; construct `Page` from path + site + frontmatter in one step; move the ordering next to `Page` (sorting on `&Page` directly); have `recent_pages` return pages paired with their date so the feed needs no `let … else`.
+
+**Done when.** No unused type or field remains on `Page`, every `Page` has a valid slug from construction, and ordering has one home.
+
+### ARCH-7
+**Smaller cleanups** · low · S · `/ship-feature` · open
+
+- `frontmatter::parse` returns `Option` for "no frontmatter", which the loader immediately turns into an error. Return the error from `parse` instead.
+- CLI path options are `String`s converted with `Path::new`; declare them as `PathBuf`. `project_path` (`"."`) is joined onto `site` but not onto `templates` or `assets`; remove it.
+
+**Done when.** Both are changed with behavior and messages unchanged.
+
+---
+
+## Operations and specs
+
+### OPS-1
+**Continuous integration** · medium · S · `/ship-feature` · depends on a git remote · open
+
+No CI exists because the repository has no remote. Once one is added, run the definition-of-done gate (`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`) on every push, on Linux and Windows (the code has Windows-specific paths in slug handling and `clean_contents`).
+
+### SPEC-1
+**Confirm the constitution's open proposals** · medium · S · manual · open
+
+`specs/constitution.md` has items marked **Proposed, confirm**:
+- New specs start at acceptance-criteria group `AC-10`.
+- "Keep diffs reviewable by formatting only what you change."
+- The `/spec-feature` vs `/ship-feature` guidance.
+
+Confirm or change each, then remove the markers.
+
+---
+
+## Risks and gaps
+
+Source: `specs/_system/overview.md`, "Risky areas" (items marked **Inferred, confirm**), and the audit of 2026-09-14.
+
+### RISK-1
+**Symlink loops in the site folder** · medium · S · `/ship-feature` · open
+
+`loader::traverse` recurses with `path.is_dir()`, which follows symlinks, and has no cycle guard: a symlink pointing at an ancestor folder recurses until the stack overflows. Decide whether to skip symlinked folders or detect cycles (canonical-path set), and add a test.
+
+### RISK-2
+**Symlinked folders inside the assets folder** · medium · S · `/ship-feature` · open
+
+`assets::collect` uses `DirEntry::file_type()`, which does not follow symlinks, so a symlink to a folder is planned as a file and `fs::copy` fails after the output folder was cleaned. Either follow it during planning or reject it before cleaning, and add a test that the previous output survives.
+
+### RISK-3
+**Raw HTML in content is trusted but undocumented** · low · S · `/ship-feature` · open
+
+pulldown-cmark passes raw HTML through and templates print `page.content | safe`, so content authors can inject any HTML. That is normal for a static site generator, but `README.md` does not say so. Document it under "Known limitations" (or add an option to strip raw HTML if untrusted content is ever a use case).
+
+### RISK-4
+**Unknown frontmatter keys are silently ignored** · medium · S · `/spec-feature` · open
+
+`MangoFrontmatter` lacks `deny_unknown_fields` (unlike `SiteConfig`), so a typo such as `"tag"` or `"dates"` is dropped without warning. Making it strict is a user-visible behavior change for existing sites, so specify it: which fields exist, the error message, and whether drafts are checked.
+
+### TEST-1
+**No test for CRLF line endings** · low · S · `/ship-feature` · open
+
+Frontmatter parsing handles `\r\n` (verified by hand during the audit) but no test covers it. Add a unit test in `content/frontmatter.rs` and a temp-site E2E test.
+
+### DOC-1
+**Stale line references in the system overview** · low · S · `/ship-feature` · open
+
+`specs/_system/overview.md` cites line numbers (e.g. in `src/cli.rs` and `example/meta/templates/page.html`) that moved in later commits. Refresh them, or cite functions instead of lines so they stay valid; ARCH-1 to ARCH-5 will move most of them again, so this is best done after those land.

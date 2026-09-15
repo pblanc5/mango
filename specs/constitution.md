@@ -74,6 +74,7 @@ From the documented "Definition of done" (`CLAUDE.md:71-82`) and the maintainer'
 - `CLAUDE.md`: architecture, pipeline order, template contexts, module map, conventions and the definition of done. This is the authoritative developer doc.
 - `README.md`: the user guide (commands and flags, content rules, config, output URLs, templates, safe builds, known limitations).
 - `example/mango.json`, `example/site/`, `example/meta/`: the fixture site that shows every success-path feature.
+- `specs/_system/backlog.md`: tracked improvements (architecture review, risks, gaps) with IDs, priorities and suggested workflows. Update an item's status when work on it starts and when it lands.
 - `LICENSE`: GPL-3.0-or-later.
 - `.claude/pipeline/workflows/*.yaml`, `.claude/commands/*.md`: dev-pipeline workflow definitions.
 

@@ -1,6 +1,6 @@
 # mango
 
-A static site generator CLI written in Rust (edition 2024, toolchain pinned in `rust-toolchain.toml`). Licensed GPL-3.0-or-later (`LICENSE`). `README.md` is the user-facing guide; this file is for working on the code.
+A static site generator CLI written in Rust (edition 2024, toolchain pinned in `rust-toolchain.toml`). Licensed GPL-3.0-or-later (`LICENSE`). `README.md` is the user-facing guide; this file is for working on the code. Planned improvements and known gaps are tracked in `specs/_system/backlog.md`: check it before starting related work, and update an item's status when you pick it up or finish it.
 
 Pipeline: load markdown files (`.md` / `.markdown`, any case) → parse frontmatter → load the site config → render markdown with pulldown-cmark → render through Tera templates → write `dist/<slug>/index.html` per page (plus a section index page for every folder level, the home page at `dist/index.html`, the tag index at `dist/tags/index.html` and one `dist/tags/<tag>/index.html` per tag) → write `dist/feed.xml` and `dist/sitemap.xml` (only when `base_url` is set) → copy assets into `dist/assets/`.
 
