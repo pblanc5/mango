@@ -68,8 +68,8 @@ fn build_temp_site(site: &Path, out: &Path) -> Output {
     let root = root();
     build_with(
         site,
-        &root.join("test/meta/templates"),
-        &root.join("test/meta/assets"),
+        &root.join("example/meta/templates"),
+        &root.join("example/meta/assets"),
         out,
     )
 }
@@ -112,10 +112,10 @@ fn default_layout_project(dir: &Path) {
     let root = root();
     write_file(&dir.join("site/posts/one.md"), &page("One", false));
     copy_dir(
-        &root.join("test/meta/templates"),
+        &root.join("example/meta/templates"),
         &dir.join("meta/templates"),
     );
-    copy_dir(&root.join("test/meta/assets"), &dir.join("meta/assets"));
+    copy_dir(&root.join("example/meta/assets"), &dir.join("meta/assets"));
 }
 
 fn assert_success(output: &Output) {
@@ -135,8 +135,8 @@ fn assert_failure(output: &Output, what: &str) {
     );
 }
 
-/// Builds the committed fixture site (`test/site`, `test/meta`,
-/// `test/mango.json`) once per test run and returns its output folder. The
+/// Builds the committed fixture site (`example/site`, `example/meta`,
+/// `example/mango.json`) once per test run and returns its output folder. The
 /// fixture is meant to exercise every feature on the success path; the
 /// `fixture_*` tests below read this output and must never modify it.
 fn fixture_dist() -> &'static Path {
@@ -150,15 +150,15 @@ fn fixture_dist() -> &'static Path {
             &[
                 "build",
                 "--site",
-                "test/site",
+                "example/site",
                 "--templates",
-                "test/meta/templates",
+                "example/meta/templates",
                 "--assets",
-                "test/meta/assets",
+                "example/meta/assets",
                 "-o",
                 out.to_str().unwrap(),
                 "--config",
-                "test/mango.json",
+                "example/mango.json",
             ],
             &root,
         );
@@ -185,49 +185,49 @@ fn assert_in_order(text: &str, needles: &[&str]) {
 
 #[test]
 fn fixture_renders_markdown_extensions() {
-    let html = fixture_file("posts/extensions/index.html");
+    let html = fixture_file("blog/how-i-write/index.html");
     for needle in [
         "<table>",
-        "<del>removed</del>",
+        "<del>writing every morning</del>",
         r#"class="footnote-reference""#,
-        r#"<div class="footnote-definition" id="fn">"#,
+        r#"<div class="footnote-definition" id="origin">"#,
         r#"<h2 id="tables">"#,
-        r#"id="custom-id""#,
-        r#"class="fancy""#,
-        r#"<code class="language-rust">"#,
-        r#"<a href="https://example.org">"#,
+        r#"<h2 id="checklist" class="no-toc">"#,
+        r#"<code class="language-json">"#,
+        r#"<a href="https://spec.commonmark.org">"#,
     ] {
         assert!(html.contains(needle), "missing {needle}:\n{html}");
     }
-    assert_eq!(html.matches(r#"type="checkbox""#).count(), 2, "{html}");
-    assert_eq!(html.matches("checked").count(), 1, "{html}");
+    assert_eq!(html.matches(r#"type="checkbox""#).count(), 3, "{html}");
+    assert_eq!(html.matches(r#"checked="""#).count(), 1, "{html}");
 }
 
 #[test]
 fn fixture_escapes_special_characters() {
-    let escaped = "Tom &amp; Jerry &lt;3 &quot;Quotes&quot;";
-    let html = fixture_file("posts/escaping/index.html");
+    let title = "Rust &amp; WebAssembly: drawing on a &lt;canvas&gt;";
+    let description = "Pixels, &quot;quotes&quot; &amp; a 60 fps render loop without a framework";
+    let html = fixture_file("blog/rust-and-wasm-canvas/index.html");
     assert!(
-        between(&html, "<title>", "</title>").contains(escaped),
+        between(&html, "<title>", "</title>").contains(title),
         "{html}"
     );
-    assert!(html.contains(&format!("<h1>{escaped}</h1>")), "{html}");
+    assert!(html.contains(&format!("<h1>{title}</h1>")), "{html}");
     assert!(
-        html.contains(
-            r#"<meta name="description" content="Ampersands &amp; &lt;angle&gt; brackets">"#
-        ),
+        html.contains(&format!(
+            r#"<meta name="description" content="{description}">"#
+        )),
         "{html}"
     );
-    assert!(html.contains("5 &gt; 3 &amp;&amp; 2 &lt; 4"), "{html}");
-    assert!(!html.contains("<3"), "{html}");
+    assert!(
+        html.contains("width &gt; 0 &amp;&amp; height &lt; 4096"),
+        "{html}"
+    );
+    assert!(!html.contains("<canvas>"), "{html}");
 
     let feed = fixture_file("feed.xml");
+    assert!(feed.contains(&format!("<title>{title}</title>")), "{feed}");
     assert!(
-        feed.contains(&format!("<title>{escaped}</title>")),
-        "{feed}"
-    );
-    assert!(
-        feed.contains("<description>Ampersands &amp; &lt;angle&gt; brackets</description>"),
+        feed.contains(&format!("<description>{description}</description>")),
         "{feed}"
     );
 }
@@ -235,19 +235,21 @@ fn fixture_escapes_special_characters() {
 #[test]
 fn fixture_excludes_drafts_everywhere() {
     let out = fixture_dist();
-    assert!(!out.join("posts/draft").exists());
-    assert!(!out.join("tags/secret").exists());
+    assert!(!out.join("blog/incremental-builds").exists());
+    assert!(!out.join("tags/wip").exists());
     for file in [
         "index.html",
-        "posts/index.html",
+        "blog/index.html",
         "tags/index.html",
-        "tags/blog/index.html",
+        "tags/rust/index.html",
         "feed.xml",
         "sitemap.xml",
     ] {
         let text = fixture_file(file);
         assert!(
-            !text.contains("Secret Draft") && !text.contains("secret"),
+            !text.contains("Notes on incremental builds")
+                && !text.contains("incremental-builds")
+                && !text.contains("/tags/wip/"),
             "{file} mentions the draft:\n{text}"
         );
     }
@@ -255,124 +257,137 @@ fn fixture_excludes_drafts_everywhere() {
 
 #[test]
 fn fixture_orders_listings_and_caps_recent() {
-    // Newest first, same date by title, undated last (by title).
-    let posts = fixture_file("posts/index.html");
+    // Newest first, same date (2026-01-24) by title, undated last.
+    let blog = fixture_file("blog/index.html");
+    let posts = between(&blog, r#"<ul class="post-list">"#, "</ul>");
     assert_in_order(
-        &posts,
+        posts,
         &[
-            "Markdown Extensions",
-            "Tom &amp; Jerry",
-            "Post One",
-            "Post Two",
-            "Test Page",
-            "Posts Index Page",
-            "Undated Notes",
+            "Rust &amp; WebAssembly",
+            "How I write these posts",
+            "Fixing a flaky test in 40 lines",
+            "The weather station, one year on",
+            "2025 in review",
+            "Why I still reach for make",
+            "Reading list",
         ],
     );
-    assert!(posts.contains(r#"href="/posts/index/""#), "{posts}");
+    assert_eq!(posts.matches("<li>").count(), 7, "{posts}");
 
-    // recent_count is 5: the five newest dated pages site-wide.
+    // recent_count is 5: the five newest dated pages site-wide, projects included.
     let home = fixture_file("index.html");
     let recent = between(&home, r#"<ul class="recent-list">"#, "</ul>");
     assert_in_order(
         recent,
         &[
-            "Markdown Extensions",
-            "Tom &amp; Jerry",
-            "Mango Task Tracker",
-            "Post One",
-            "Post Two",
+            "Rust &amp; WebAssembly",
+            "Lantern",
+            "How I write these posts",
+            "Fixing a flaky test in 40 lines",
+            "The weather station, one year on",
         ],
     );
     assert_eq!(recent.matches("<li>").count(), 5, "{recent}");
-    for absent in ["Test Page", "Undated Notes", "About", "Deep Dive"] {
+    for absent in ["2025 in review", "Reading list", "Tidepool", "About"] {
         assert!(!recent.contains(absent), "{absent} in recent:\n{recent}");
     }
 
-    let blog = fixture_file("tags/blog/index.html");
-    assert_in_order(
-        &blog,
-        &[
-            "Markdown Extensions",
-            "Post One",
-            "Post Two",
-            "Undated Notes",
-        ],
-    );
+    // Undated pages come last in tag listings too.
+    let writing = fixture_file("tags/writing/index.html");
+    assert_in_order(&writing, &["How I write these posts", "Reading list"]);
 }
 
 #[test]
 fn fixture_nested_sections_and_top_level_page() {
     let home = fixture_file("index.html");
-    let sections = between(&home, r#"<ul class="section-list">"#, "</ul>");
+    let explore = between(&home, r#"<ul class="card-grid">"#, "</ul>");
     assert_in_order(
-        sections,
+        explore,
         &[
-            r#"href="/docs/">docs</a> (0)"#,
-            r#"href="/posts/">posts</a> (7)"#,
-            r#"href="/projects/">projects</a> (1)"#,
+            r#"href="/blog/"><strong>Blog</strong><span>7 pages</span>"#,
+            r#"href="/projects/"><strong>Projects</strong><span>Browse</span>"#,
         ],
     );
-    assert!(!sections.contains("about"), "{sections}");
+    assert!(!explore.contains("/about/"), "{explore}");
 
-    let docs = fixture_file("docs/index.html");
-    assert!(docs.contains(r#"href="/docs/guides/""#), "{docs}");
-    assert!(!docs.contains(r#"class="section-list""#), "{docs}");
+    // projects/ has only subsections, no pages of its own.
+    let projects = fixture_file("projects/index.html");
+    assert_in_order(
+        &projects,
+        &[
+            r#"href="/projects/hardware/""#,
+            r#"href="/projects/software/""#,
+        ],
+    );
+    assert!(!projects.contains(r#"class="post-list""#), "{projects}");
 
-    let guides = fixture_file("docs/guides/index.html");
-    assert!(guides.contains("<h1>guides</h1>"), "{guides}");
+    let hardware = fixture_file("projects/hardware/index.html");
     assert!(
-        guides.contains(r#"href="/docs/guides/advanced/""#),
-        "{guides}"
+        hardware.contains(r#"href="/projects/hardware/keyboards/""#),
+        "{hardware}"
     );
     assert!(
-        guides.contains(r#"href="/docs/guides/getting-started/""#),
-        "{guides}"
+        hardware.contains(r#"href="/projects/hardware/weather-station/""#),
+        "{hardware}"
     );
-    assert!(!guides.contains("&#x2F;"), "{guides}");
 
-    let advanced = fixture_file("docs/guides/advanced/index.html");
-    assert!(
-        advanced.contains(r#"href="/docs/guides/advanced/deep-dive/""#),
-        "{advanced}"
+    // Three levels deep: breadcrumbs link every ancestor section.
+    let keyboards = fixture_file("projects/hardware/keyboards/index.html");
+    let crumbs = between(&keyboards, r#"<nav class="breadcrumbs""#, "</nav>");
+    assert_in_order(
+        crumbs,
+        &[
+            r#"<a href="/">Home</a>"#,
+            r#"<a href="/projects/">Projects</a>"#,
+            r#"<a href="/projects/hardware/">Hardware</a>"#,
+        ],
     );
-    assert!(!advanced.contains("subsection-list"), "{advanced}");
+    assert!(keyboards.contains("<h1>Keyboards</h1>"), "{keyboards}");
+    assert!(
+        keyboards.contains(r#"href="/projects/hardware/keyboards/corne-build/""#),
+        "{keyboards}"
+    );
+    assert!(!keyboards.contains(r#"class="card-grid""#), "{keyboards}");
+    assert!(!keyboards.contains("&#x2F;"), "{keyboards}");
 
     let about = fixture_file("about/index.html");
     assert!(about.contains("<h1>About</h1>"), "{about}");
-    assert!(!about.contains("<time>"), "{about}");
+    assert!(!about.contains("<time"), "{about}");
 }
 
 #[test]
 fn fixture_tag_index_counts_and_dedup() {
     let tags = fixture_file("tags/index.html");
-    let list = between(&tags, r#"<ul class="tag-list">"#, "</ul>");
+    let cloud = between(&tags, r#"<ul class="tag-cloud">"#, "</ul>");
     assert_in_order(
-        list,
+        cloud,
         &[
-            ">blog</a> (4)",
-            ">docs</a> (2)",
-            ">escaping</a> (1)",
-            ">guide</a> (1)",
-            ">mango</a> (1)",
-            ">markdown</a> (2)",
-            ">progress</a> (1)",
-            ">static-site</a> (1)",
-            ">test</a> (1)",
+            r#">books<span class="count">1</span>"#,
+            r#">electronics<span class="count">2</span>"#,
+            r#">hardware<span class="count">3</span>"#,
+            r#">keyboards<span class="count">1</span>"#,
+            r#">markdown<span class="count">1</span>"#,
+            r#">personal<span class="count">1</span>"#,
+            r#">rust<span class="count">4</span>"#,
+            r#">testing<span class="count">1</span>"#,
+            r#">tools<span class="count">2</span>"#,
+            r#">webassembly<span class="count">2</span>"#,
+            r#">writing<span class="count">2</span>"#,
         ],
     );
-    assert_eq!(list.matches("<li>").count(), 9, "{list}");
+    assert_eq!(cloud.matches("<li>").count(), 11, "{cloud}");
 
-    let page = fixture_file("posts/extensions/index.html");
+    // how-i-write.md lists "writing" twice.
+    let page = fixture_file("blog/how-i-write/index.html");
     let links = between(&page, r#"<ul class="tag-list">"#, "</ul>");
     assert_eq!(
-        links.matches(r#"href="/tags/markdown/""#).count(),
+        links.matches(r#"href="/tags/writing/""#).count(),
         1,
         "duplicate tag must be dropped:\n{links}"
     );
     assert_in_order(
         links,
-        &[r#"href="/tags/markdown/""#, r#"href="/tags/blog/""#],
+        &[r#"href="/tags/writing/""#, r#"href="/tags/markdown/""#],
     );
 }
 
@@ -381,26 +396,29 @@ fn fixture_feed_and_sitemap() {
     let feed = fixture_file("feed.xml");
     assert!(
         feed.contains(
-            "<description>Every mango feature, tested &amp; escaped &lt;ok&gt;</description>"
+            "<description>Notes on Rust, small tools &amp; things that go &lt;beep&gt;</description>"
         ),
         "{feed}"
     );
-    // base_url has a trailing slash in test/mango.json.
-    assert!(feed.contains("<link>https://example.com/</link>"), "{feed}");
-    assert!(!feed.contains("example.com//"), "{feed}");
+    // base_url has a trailing slash in example/mango.json.
+    assert!(
+        feed.contains("<link>https://wrencalloway.example/</link>"),
+        "{feed}"
+    );
+    assert!(!feed.contains(".example//"), "{feed}");
     assert_eq!(feed.matches("<item>").count(), 5, "{feed}");
     assert_in_order(
         &feed,
         &[
-            "Markdown Extensions",
-            "Tom &amp; Jerry",
-            "Mango Task Tracker",
-            "Post One",
-            "Post Two",
+            "Rust &amp; WebAssembly",
+            "Lantern",
+            "How I write these posts",
+            "Fixing a flaky test in 40 lines",
+            "The weather station, one year on",
         ],
     );
     assert!(
-        feed.contains("<pubDate>Sun, 01 Mar 2026 00:00:00 +0000</pubDate>"),
+        feed.contains("<pubDate>Mon, 02 Mar 2026 00:00:00 +0000</pubDate>"),
         "{feed}"
     );
     assert!(
@@ -409,29 +427,29 @@ fn fixture_feed_and_sitemap() {
     );
 
     let sitemap = fixture_file("sitemap.xml");
-    assert_eq!(sitemap.matches("<loc>").count(), 27, "{sitemap}");
-    assert_eq!(sitemap.matches("<lastmod>").count(), 8, "{sitemap}");
-    assert!(!sitemap.contains("example.com//"), "{sitemap}");
+    assert_eq!(sitemap.matches("<loc>").count(), 30, "{sitemap}");
+    assert_eq!(sitemap.matches("<lastmod>").count(), 10, "{sitemap}");
+    assert!(!sitemap.contains(".example//"), "{sitemap}");
     for path in [
         "about/",
-        "posts/index/",
-        "docs/",
-        "docs/guides/advanced/",
+        "blog/",
+        "projects/",
+        "projects/hardware/keyboards/",
         "tags/",
-        "tags/escaping/",
+        "tags/writing/",
     ] {
         assert!(
-            sitemap.contains(&format!("<loc>https://example.com/{path}</loc>")),
+            sitemap.contains(&format!("<loc>https://wrencalloway.example/{path}</loc>")),
             "{path} missing:\n{sitemap}"
         );
     }
     assert!(
-        sitemap.contains("<loc>https://example.com/about/</loc>\n  </url>"),
+        sitemap.contains("<loc>https://wrencalloway.example/about/</loc>\n  </url>"),
         "undated page must have no lastmod:\n{sitemap}"
     );
     assert!(
         sitemap.contains(
-            "<loc>https://example.com/docs/guides/advanced/deep-dive/</loc>\n    <lastmod>2025-12-01</lastmod>"
+            "<loc>https://wrencalloway.example/projects/hardware/keyboards/corne-build/</loc>\n    <lastmod>2025-03-10</lastmod>"
         ),
         "{sitemap}"
     );
@@ -440,8 +458,12 @@ fn fixture_feed_and_sitemap() {
 #[test]
 fn fixture_copies_nested_assets_and_fills_page_context() {
     let out = fixture_dist();
-    let source = root().join("test/meta/assets");
-    for asset in ["minimal/main.css", "images/logo.svg"] {
+    let source = root().join("example/meta/assets");
+    for asset in [
+        "css/main.css",
+        "images/logo.svg",
+        "images/projects/weather-station.svg",
+    ] {
         assert_eq!(
             fs::read(out.join("assets").join(asset)).unwrap(),
             fs::read(source.join(asset)).unwrap(),
@@ -449,23 +471,35 @@ fn fixture_copies_nested_assets_and_fills_page_context() {
         );
     }
 
-    let page = fixture_file("posts/post_one/index.html");
+    let page = fixture_file("blog/fixing-a-flaky-test/index.html");
     assert!(
-        page.contains(r#"<link rel="canonical" href="/posts/post_one/">"#),
+        page.contains(r#"<link rel="canonical" href="/blog/fixing-a-flaky-test/">"#),
         "{page}"
     );
-    assert!(page.contains("by tester"), "{page}");
+    assert!(page.contains("by Wren Calloway"), "{page}");
+    assert!(
+        page.contains(
+            r#"<p class="lede">A test that failed one run in fifty, and the directory listing that caused it</p>"#
+        ),
+        "{page}"
+    );
 
     let home = fixture_file("index.html");
     assert!(
         home.contains(
-            r#"<meta name="description" content="Every mango feature, tested &amp; escaped &lt;ok&gt;">"#
+            r#"<meta name="description" content="Notes on Rust, small tools &amp; things that go &lt;beep&gt;">"#
         ),
         "{home}"
     );
     assert!(
         home.contains(r#"<img src="/assets/images/logo.svg""#),
         "{home}"
+    );
+
+    let station = fixture_file("blog/weather-station-one-year-on/index.html");
+    assert!(
+        station.contains(r#"<img src="/assets/images/projects/weather-station.svg""#),
+        "{station}"
     );
 }
 
@@ -479,36 +513,40 @@ fn build_generates_site_from_fixture() {
     // (drafts, dropped tags, misplaced assets).
     let mut expected = vec![
         "about/index.html",
+        "assets/css/main.css",
         "assets/images/logo.svg",
-        "assets/minimal/main.css",
-        "docs/guides/advanced/deep-dive/index.html",
-        "docs/guides/advanced/index.html",
-        "docs/guides/getting-started/index.html",
-        "docs/guides/index.html",
-        "docs/index.html",
+        "assets/images/projects/weather-station.svg",
+        "blog/2025-in-review/index.html",
+        "blog/fixing-a-flaky-test/index.html",
+        "blog/how-i-write/index.html",
+        "blog/index.html",
+        "blog/reading-list/index.html",
+        "blog/rust-and-wasm-canvas/index.html",
+        "blog/weather-station-one-year-on/index.html",
+        "blog/why-i-still-use-make/index.html",
         "feed.xml",
         "index.html",
-        "posts/escaping/index.html",
-        "posts/extensions/index.html",
-        "posts/index.html",
-        "posts/index/index.html",
-        "posts/post_one/index.html",
-        "posts/post_two/index.html",
-        "posts/test/index.html",
-        "posts/undated/index.html",
+        "projects/hardware/index.html",
+        "projects/hardware/keyboards/corne-build/index.html",
+        "projects/hardware/keyboards/index.html",
+        "projects/hardware/weather-station/index.html",
         "projects/index.html",
-        "projects/mango/index.html",
+        "projects/software/index.html",
+        "projects/software/lantern/index.html",
+        "projects/software/tidepool/index.html",
         "sitemap.xml",
-        "tags/blog/index.html",
-        "tags/docs/index.html",
-        "tags/escaping/index.html",
-        "tags/guide/index.html",
+        "tags/books/index.html",
+        "tags/electronics/index.html",
+        "tags/hardware/index.html",
         "tags/index.html",
-        "tags/mango/index.html",
+        "tags/keyboards/index.html",
         "tags/markdown/index.html",
-        "tags/progress/index.html",
-        "tags/static-site/index.html",
-        "tags/test/index.html",
+        "tags/personal/index.html",
+        "tags/rust/index.html",
+        "tags/testing/index.html",
+        "tags/tools/index.html",
+        "tags/webassembly/index.html",
+        "tags/writing/index.html",
     ];
     expected.sort();
     let actual: Vec<String> = snapshot(out)
@@ -517,54 +555,54 @@ fn build_generates_site_from_fixture() {
         .collect();
     assert_eq!(actual, expected);
 
-    let page = fs::read_to_string(out.join("posts/post_one/index.html")).unwrap();
+    let page = fs::read_to_string(out.join("blog/fixing-a-flaky-test/index.html")).unwrap();
     assert!(
-        page.contains("Post One"),
+        page.contains("Fixing a flaky test in 40 lines"),
         "rendered page should contain the post title"
     );
     // AC-5.2
     assert!(
-        page.contains(r#"<meta name="description" content="my first post">"#),
+        page.contains(
+            r#"<meta name="description" content="A test that failed one run in fifty, and the directory listing that caused it">"#
+        ),
         "rendered page should contain the frontmatter description meta tag, got:\n{page}"
     );
     // AC-1.8
     assert!(
-        page.contains("<time>2026-01-24</time>"),
+        page.contains(r#"<time datetime="2026-01-24">2026-01-24</time>"#),
         "rendered page should contain the formatted date, got:\n{page}"
     );
 
-    // AC-2.6: all three posts share a date, so they are ordered by title.
-    let index = fs::read_to_string(out.join("posts/index.html")).unwrap();
-    let offsets: Vec<usize> = ["Post One", "Post Two", "Test Page"]
-        .iter()
-        .map(|t| {
-            index
-                .find(t)
-                .unwrap_or_else(|| panic!("'{t}' missing from:\n{index}"))
-        })
-        .collect();
-    assert!(
-        offsets[0] < offsets[1] && offsets[1] < offsets[2],
-        "posts index must list Post One, Post Two, Test Page in order, got:\n{index}"
+    // AC-2.6: both posts share a date, so they are ordered by title.
+    let index = fs::read_to_string(out.join("blog/index.html")).unwrap();
+    assert_in_order(
+        &index,
+        &[
+            "Fixing a flaky test in 40 lines",
+            "The weather station, one year on",
+        ],
     );
 
     // AC-5.4 (batch 3)
-    assert!(index.contains(r#"href="/posts/post_one/""#), "{index}");
+    assert!(
+        index.contains(r#"href="/blog/fixing-a-flaky-test/""#),
+        "{index}"
+    );
     assert!(!index.contains("&#x2F;"), "{index}");
 
     // AC-1.14 (batch 3)
     assert!(
-        between(&page, "<title>", "</title>").contains("Mango Test Site"),
+        between(&page, "<title>", "</title>").contains("Wren Calloway"),
         "configured title missing from <title>:\n{page}"
     );
     // Each page names itself in <title> and has exactly one <h1>.
     assert!(
-        between(&page, "<title>", "</title>").contains("Post One |"),
+        between(&page, "<title>", "</title>").contains("Fixing a flaky test in 40 lines |"),
         "page title missing from <title>:\n{page}"
     );
     assert_eq!(page.matches("<h1").count(), 1, "{page}");
     assert!(
-        between(&page, "<footer>", "</footer>").contains("Mango Tester"),
+        between(&page, "<footer>", "</footer>").contains("Wren Calloway"),
         "configured author missing from <footer>:\n{page}"
     );
 
@@ -574,17 +612,24 @@ fn build_generates_site_from_fixture() {
         home.contains("<!DOCTYPE html>"),
         "home must extend base:\n{home}"
     );
-    let tracker = home.find("Mango Task Tracker").expect(&home);
-    let post_one = home.find("Post One").expect(&home);
-    assert!(tracker < post_one, "newest page must come first:\n{home}");
-    assert!(home.contains(r#"href="/posts/""#), "{home}");
-    assert!(home.contains(r#"href="/projects/mango/""#), "{home}");
+    assert_in_order(&home, &["Rust &amp; WebAssembly", "Lantern"]);
+    assert!(home.contains(r#"href="/blog/""#), "{home}");
+    assert!(
+        home.contains(r#"href="/projects/software/lantern/""#),
+        "{home}"
+    );
 
     // AC-8.3 (batch 4): tag pages, tag links, feed and sitemap.
-    let blog = fs::read_to_string(out.join("tags/blog/index.html")).unwrap();
-    assert!(blog.contains(r#"href="/posts/post_one/""#), "{blog}");
-    assert!(blog.contains(r#"href="/posts/post_two/""#), "{blog}");
-    assert!(page.contains(r#"href="/tags/blog/""#), "{page}");
+    let rust = fs::read_to_string(out.join("tags/rust/index.html")).unwrap();
+    assert!(
+        rust.contains(r#"href="/blog/fixing-a-flaky-test/""#),
+        "{rust}"
+    );
+    assert!(
+        rust.contains(r#"href="/blog/rust-and-wasm-canvas/""#),
+        "{rust}"
+    );
+    assert!(page.contains(r#"href="/tags/rust/""#), "{page}");
 
     // AC-8.2 (batch 4)
     assert!(
@@ -592,27 +637,22 @@ fn build_generates_site_from_fixture() {
         "{page}"
     );
     let tags = fs::read_to_string(out.join("tags/index.html")).unwrap();
-    assert!(tags.contains(r#"href="/tags/blog/""#), "{tags}");
+    assert!(tags.contains(r#"href="/tags/rust/""#), "{tags}");
 
     let feed = fs::read_to_string(out.join("feed.xml")).unwrap();
     assert!(
-        feed.contains("<link>https://example.com/projects/mango/</link>"),
+        feed.contains("<link>https://wrencalloway.example/blog/fixing-a-flaky-test/</link>"),
         "{feed}"
     );
-    let tracker = feed.find("Mango Task Tracker").expect(&feed);
-    let post_one = feed.find("Post One").expect(&feed);
-    assert!(
-        tracker < post_one,
-        "newest feed item must come first:\n{feed}"
-    );
+    assert_in_order(&feed, &["Rust &amp; WebAssembly", "Lantern"]);
 
     let sitemap = fs::read_to_string(out.join("sitemap.xml")).unwrap();
     assert!(
-        sitemap.contains("<loc>https://example.com/</loc>"),
+        sitemap.contains("<loc>https://wrencalloway.example/</loc>"),
         "{sitemap}"
     );
     assert!(
-        sitemap.contains("<loc>https://example.com/tags/blog/</loc>"),
+        sitemap.contains("<loc>https://wrencalloway.example/tags/rust/</loc>"),
         "{sitemap}"
     );
 }
@@ -816,9 +856,9 @@ fn build_temp_site_with_config(site: &Path, out: &Path, config: &Path) -> Output
             "--site",
             site.to_str().unwrap(),
             "--templates",
-            root.join("test/meta/templates").to_str().unwrap(),
+            root.join("example/meta/templates").to_str().unwrap(),
             "--assets",
-            root.join("test/meta/assets").to_str().unwrap(),
+            root.join("example/meta/assets").to_str().unwrap(),
             "-o",
             out.to_str().unwrap(),
             "--config",
@@ -944,7 +984,7 @@ fn config_error_reported_before_templates_error() {
             "--templates",
             dir.join("no-templates").to_str().unwrap(),
             "--assets",
-            root().join("test/meta/assets").to_str().unwrap(),
+            root().join("example/meta/assets").to_str().unwrap(),
             "-o",
             dir.join("dist").to_str().unwrap(),
             "--config",
@@ -1136,11 +1176,11 @@ fn build_fails_with_missing_templates_dir() {
         &[
             "build",
             "--site",
-            "test/site",
+            "example/site",
             "--templates",
             templates.to_str().unwrap(),
             "--assets",
-            "test/meta/assets",
+            "example/meta/assets",
             "-o",
             dir.join("dist").to_str().unwrap(),
         ],
@@ -1194,7 +1234,7 @@ fn build_undated_page_renders_without_time() {
 
     assert_success(&output);
     let html = fs::read_to_string(out.join("posts/undated/index.html")).unwrap();
-    assert!(!html.contains("<time>"), "undated page has <time>:\n{html}");
+    assert!(!html.contains("<time"), "undated page has <time>:\n{html}");
 }
 
 // AC-3.1, AC-3.2
@@ -1332,7 +1372,7 @@ fn failed_rebuild_keeps_previous_output() {
     let output = build_with(
         &site,
         &dir.join("no-templates"),
-        &root.join("test/meta/assets"),
+        &root.join("example/meta/assets"),
         &out,
     );
     assert_failure(&output, "missing templates");
@@ -1427,7 +1467,7 @@ fn build_fails_when_assets_path_has_no_name() {
                 "--site",
                 site.to_str().unwrap(),
                 "--templates",
-                root.join("test/meta/templates").to_str().unwrap(),
+                root.join("example/meta/templates").to_str().unwrap(),
                 "--assets",
                 assets,
                 "-o",
@@ -1454,10 +1494,10 @@ fn built_site_with_private_templates(test_name: &str) -> (PathBuf, PathBuf, Path
     let dir = temp_dir(test_name);
     let site = dir.join("site");
     let templates = dir.join("templates");
-    let assets = root.join("test/meta/assets");
+    let assets = root.join("example/meta/assets");
     let out = dir.join("dist");
     write_file(&site.join("posts/one.md"), &page("One", false));
-    copy_dir(&root.join("test/meta/templates"), &templates);
+    copy_dir(&root.join("example/meta/templates"), &templates);
 
     assert_success(&build_with(&site, &templates, &assets, &out));
     write_file(&out.join("marker.txt"), "keep me");
@@ -1468,7 +1508,7 @@ fn assert_previous_output_intact(out: &Path) {
     for path in [
         "posts/one/index.html",
         "posts/index.html",
-        "assets/minimal/main.css",
+        "assets/css/main.css",
         "marker.txt",
     ] {
         assert!(
@@ -1655,15 +1695,15 @@ fn fixture_build_is_deterministic() {
         &[
             "build",
             "--site",
-            "test/site",
+            "example/site",
             "--templates",
-            "test/meta/templates",
+            "example/meta/templates",
             "--assets",
-            "test/meta/assets",
+            "example/meta/assets",
             "-o",
             second.to_str().unwrap(),
             "--config",
-            "test/mango.json",
+            "example/mango.json",
         ],
         &root(),
     );
@@ -1768,17 +1808,14 @@ fn build_fails_when_page_lands_on_an_asset_keeping_output() {
     assert_success(&build_temp_site(&site, &out));
     let before = snapshot(&out);
 
-    // The fixture assets contain minimal/main.css, copied to assets/minimal/main.css.
-    write_file(
-        &site.join("assets/minimal/main.css.md"),
-        &page("Clash", false),
-    );
+    // The fixture assets contain css/main.css, copied to assets/css/main.css.
+    write_file(&site.join("assets/css/main.css.md"), &page("Clash", false));
     let output = build_temp_site(&site, &out);
 
     assert_failure(&output, "page nested under an asset file");
     let err = stderr(&output);
-    assert!(err.contains("asset 'minimal/main.css'"), "{err}");
-    assert!(err.contains("page 'assets/minimal/main.css'"), "{err}");
+    assert!(err.contains("asset 'css/main.css'"), "{err}");
+    assert!(err.contains("page 'assets/css/main.css'"), "{err}");
     assert_eq!(
         snapshot(&out),
         before,
@@ -1798,7 +1835,7 @@ fn build_fails_on_missing_assets_folder_keeping_output() {
 
     let output = build_with(
         &site,
-        &root.join("test/meta/templates"),
+        &root.join("example/meta/templates"),
         &dir.join("missing-assets"),
         &out,
     );

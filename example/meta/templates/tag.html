@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{% block title %}#{{ tag.name }} | {{ super() }}{% endblock title %}
+
+{% block content %}
+<nav class="breadcrumbs" aria-label="Breadcrumbs">
+    <a href="/">Home</a> / <a href="/tags/">Tags</a>
+</nav>
+<h1>#{{ tag.name }}</h1>
+
+<ul class="post-list">
+{% for page in tag.pages %}
+    <li><a href="{{ page.url | safe }}">{{ page.title }}</a>{% if page.date %} <time datetime="{{ page.date }}">{{ page.date }}</time>{% endif %}</li>
+{% endfor %}
+</ul>
+{% endblock content %}

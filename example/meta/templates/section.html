@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{# Slugs contain '/', which autoescaping would print as &#x2F;, so show the last segment. #}
+{% block title %}{{ section.slug | split(pat="/") | last | capitalize }} | {{ super() }}{% endblock title %}
+
+{% block content %}
+{% set parts = section.slug | split(pat="/") %}
+<nav class="breadcrumbs" aria-label="Breadcrumbs">
+    <a href="/">Home</a>{% for part in parts %}{% if not loop.last %} / <a href="/{{ parts | slice(end=loop.index) | join(sep="/") | safe }}/">{{ part | capitalize }}</a>{% endif %}{% endfor %}
+</nav>
+<h1>{{ parts | last | capitalize }}</h1>
+
+{% if section.subsections %}
+<ul class="card-grid">
+{% for sub in section.subsections %}
+    <li><a href="{{ sub.url | safe }}"><strong>{{ sub.slug | split(pat="/") | last | capitalize }}</strong><span>Browse</span></a></li>
+{% endfor %}
+</ul>
+{% endif %}
+
+{% if section.pages %}
+<ul class="post-list">
+{% for page in section.pages %}
+    <li><a href="{{ page.url | safe }}">{{ page.title }}</a>{% if page.date %} <time datetime="{{ page.date }}">{{ page.date }}</time>{% endif %}</li>
+{% endfor %}
+</ul>
+{% endif %}
+{% endblock content %}

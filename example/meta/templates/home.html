@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="hero">
+    <h1>{{ config.title | default(value="My Site") }}</h1>
+    {% if config.description %}<p>{{ config.description }}</p>{% endif %}
+</section>
+
+{% if home.recent %}
+<h2>Latest</h2>
+<ul class="recent-list">
+{% for page in home.recent %}
+    <li><a href="{{ page.url | safe }}">{{ page.title }}</a> <time datetime="{{ page.date }}">{{ page.date }}</time></li>
+{% endfor %}
+</ul>
+{% endif %}
+
+<h2>Explore</h2>
+<ul class="card-grid">
+{% for section in home.sections %}
+    <li><a href="{{ section.url | safe }}"><strong>{{ section.slug | capitalize }}</strong><span>{% if section.page_count == 1 %}1 page{% elif section.page_count > 1 %}{{ section.page_count }} pages{% else %}Browse{% endif %}</span></a></li>
+{% endfor %}
+    <li><a href="/tags/"><strong>Tags</strong><span>Browse by topic</span></a></li>
+</ul>
+{% endblock content %}

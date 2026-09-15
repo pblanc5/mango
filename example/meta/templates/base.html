@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}{{ config.title | default(value="My Site") }}{% endblock title %}</title>
+    {% if page is defined %}
+    <meta name="description" content="{{ page.description }}">
+    {% elif config.description %}
+    <meta name="description" content="{{ config.description }}">
+    {% endif %}
+    <link rel="icon" type="image/svg+xml" href="/assets/images/logo.svg">
+    <link rel="stylesheet" href="/assets/css/main.css">
+    {% if config.base_url %}
+    <link rel="alternate" type="application/rss+xml" href="/feed.xml">
+    {% endif %}
+    {% block head %}{% endblock head %}
+</head>
+<body>
+    <header>
+        <div class="wrap">
+            <a class="brand" href="/"><img src="/assets/images/logo.svg" alt="" width="28" height="28">{{ config.title | default(value="My Site") }}</a>
+            <nav aria-label="Main">
+                <a href="/blog/">Blog</a>
+                <a href="/projects/">Projects</a>
+                <a href="/tags/">Tags</a>
+                <a href="/about/">About</a>
+            </nav>
+        </div>
+    </header>
+
+    <main>
+        <div class="wrap">
+{% block content %}{% endblock content %}
+        </div>
+    </main>
+
+    <footer>
+        <div class="wrap">
+            <span>{% if config.author %}© {{ config.author }}{% endif %}</span>
+            <span>Built with mango{% if config.base_url %} · <a href="/feed.xml">RSS</a>{% endif %}</span>
+        </div>
+    </footer>
+</body>
+</html>

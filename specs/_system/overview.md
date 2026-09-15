@@ -40,7 +40,7 @@ Line counts include each file's `#[cfg(test)]` module. "Unit tests" is the numbe
 | `src/build/generate/assets.rs` (166) | `plan` (`:21`) lists asset files, sorted by destination, before cleaning; `copy` (`:71`) copies them after writing | yes (`src/build/generate/assets.rs` 4 unit tests; `tests/build.rs` `build_fails_on_missing_assets_folder_keeping_output`, `build_fails_when_page_lands_on_an_asset_keeping_output`) |
 | `src/*/mod.rs` (5 files, 2-8 lines each) | Module declarations only | n/a |
 | `tests/build.rs` (1838) | E2E tests (57 `#[test]`): runs the compiled binary against the fixture (`fixture_dist()`, `:142`) and against temp sites | n/a (test code) |
-| `test/site`, `test/meta`, `test/mango.json` | Committed fixture site covering every success-path feature (`CLAUDE.md:69`); the full output list is checked by `build_generates_site_from_fixture` (`tests/build.rs:475`) | n/a (fixture) |
+| `example/site`, `example/meta`, `example/mango.json` | Committed fixture site covering every success-path feature (`CLAUDE.md:69`); the full output list is checked by `build_generates_site_from_fixture` (`tests/build.rs:475`) | n/a (fixture) |
 
 ## Entry points
 - **Binary `mango`** (`src/main.rs`) calls `cli::run()` (`src/cli.rs:86`).
@@ -92,11 +92,11 @@ From `Cargo.toml:13-20`. There are no `[dev-dependencies]` and no build script. 
     - `feed.xml` and `sitemap.xml`
     - `<assets folder name>/...` (`src/cli.rs:126-127`)
 - **In memory:** every rendered file is held in memory until the write step (`output::RenderedFile`, `GeneratedFile`, `src/build/output.rs:11-24`), so memory use grows with site size.
-- **Test artifacts** (all gitignored under `/target` or `/test/dist`, `.gitignore:1-2`):
+- **Test artifacts** (all gitignored under `/target` or `/example/dist`, `.gitignore:1-2`):
   - `target/unit-fixtures/<module>/<test>` (e.g. `src/config.rs:87`)
   - `target/integration-dist`
   - per-test temp sites under `CARGO_TARGET_TMPDIR`
-  - `test/dist`
+  - `example/dist`
 - No caches, databases or incremental build state: every build is a full rebuild.
 
 ## Risky areas
@@ -106,7 +106,7 @@ From `Cargo.toml:13-20`. There are no `[dev-dependencies]` and no build script. 
 | Determinism (whole build) | **Guarded by one test.** Byte-identical rebuilds are required (`CLAUDE.md:79`, constitution) and checked by `fixture_build_is_deterministic` in `tests/build.rs`, which builds the fixture twice and compares every file. Order depends on `BTreeMap`s and explicit sorts (`src/build/index/section.rs:21`, `src/build/generate/assets.rs:32`, sitemap sorted by `loc`), so any new listing or output must be sorted too. The fixture footer prints the current year, so two builds that straddle New Year differ. |
 | `src/content/loader.rs` `traverse` (`:25-67`) | **Inferred, confirm.** `path.is_dir()` (`:30`) follows symlinks and there is no cycle guard, so a symlink loop inside `site/` could recurse without limit. No loader test mentions symlinks; the only symlink tests are for `clean_contents` in `src/cli.rs`. It also uses `fs::read_dir` order without sorting. Listings are sorted later, but the order of page items, and so which source is named first in a collision message, can depend on the filesystem. |
 | `src/build/generate/assets.rs` `collect` and `copy` (`:36-80`) | **Inferred, confirm.** `collect` uses `DirEntry::file_type()` (`:45-48`), which does not follow symlinks. A symlink to a folder inside the assets folder would be planned as a file, and `fs::copy` (`:76`) would then fail after the output was cleaned. No asset symlink test was found. |
-| Raw HTML in content (`src/render/markdown.rs:11-13`, `test/meta/templates/page.html:26`) | **Inferred, confirm.** pulldown-cmark passes raw HTML through, and the fixture template prints `page.content \| safe`. Content is effectively trusted. `README.md` "Known limitations" (`:101-105`) does not say so. |
+| Raw HTML in content (`src/render/markdown.rs:11-13`, `example/meta/templates/page.html:26`) | **Inferred, confirm.** pulldown-cmark passes raw HTML through, and the fixture template prints `page.content \| safe`. Content is effectively trusted. `README.md` "Known limitations" (`:101-105`) does not say so. |
 | `src/content/frontmatter.rs` `MangoFrontmatter` (`:8-16`) | **Unknown keys and CRLF untested.** Frontmatter has no `deny_unknown_fields`, unlike `SiteConfig` (`src/config.rs:19`). A misspelled optional key such as `"tag"` or `"dates"` is silently ignored, and the docs don't promise either behavior. CRLF line endings are normalized by `lines()` and `join("\n")` (`:25`, `:35-36`), but no test uses `\r\n`. |
 | `src/render/template.rs` (491 lines) | **Largest source file; a contract with users.** It holds every template context and `RenderItem`. Context field names are a public contract with site templates (`CLAUDE.md:17-25`), so renaming a field breaks users' templates, and it only shows up at render time. |
 
@@ -114,9 +114,9 @@ From `Cargo.toml:13-20`. There are no `[dev-dependencies]` and no build script. 
 - **Unit test bodies:** only the tests in `src/cli.rs`, `src/render/markdown.rs` and the start of `src/config.rs` and `src/build/generate/section.rs` were read. The rest were counted by `#[test]` and sampled by name or helper.
 - **`tests/build.rs`:** only the function names were read (confirmed by search), not the bodies.
 - **Source beyond the first part of each file:** `src/content/page.rs` and `src/render/template.rs` were read in attempt 1 (non-test parts only) and checked this time by search. `src/build/generate/{feed,sitemap}.rs` non-test parts come from attempt 1.
-- **Fixture contents:** the markdown under `test/site/` and all templates except `page.html` (searched for `safe` only).
+- **Fixture contents:** the markdown under `example/site/` and all templates except `page.html` (searched for `safe` only).
 - **Skipped as generated or not relevant to architecture:**
-  - `target/` and `test/dist/` (generated)
+  - `target/` and `example/dist/` (generated)
   - `Cargo.lock`
   - `LICENSE`
   - `.claude/`

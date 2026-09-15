@@ -9,11 +9,11 @@ mango builds with the Rust toolchain pinned in `rust-toolchain.toml` (1.92).
 ```sh
 cargo install --path .
 
-# build the sample site in this repo into test/dist
-cd test && mango build
+# build the sample site in this repo into example/dist
+cd example && mango build
 ```
 
-To look at the result, serve `test/dist` with any static file server, for example `python3 -m http.server -d test/dist 8080`, and open http://localhost:8080/.
+To look at the result, serve `example/dist` with any static file server, for example `python3 -m http.server -d example/dist 8080`, and open http://localhost:8080/.
 
 ## Project layout
 
@@ -92,7 +92,7 @@ All fields are optional. Unknown fields are an error, which catches typos.
 
 ## Templates
 
-All five templates are required. Every template gets `config`; `page.html` gets `page`, `section.html` gets `section`, `home.html` gets `home`, `tags.html` gets `tags` and `tag.html` gets `tag`. HTML autoescaping is on, so print URLs with `{{ page.url | safe }}`. See `test/meta/templates` for a working set, and `CLAUDE.md` for every context field.
+All five templates are required. Every template gets `config`; `page.html` gets `page`, `section.html` gets `section`, `home.html` gets `home`, `tags.html` gets `tags` and `tag.html` gets `tag`. HTML autoescaping is on, so print URLs with `{{ page.url | safe }}`. See `example/meta/templates` for a working set, and `CLAUDE.md` for every context field.
 
 ## Safe builds
 

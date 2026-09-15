@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block title %}Tags | {{ super() }}{% endblock title %}
+
+{% block content %}
+<h1>Tags</h1>
+
+{% if tags %}
+<ul class="tag-cloud">
+{% for tag in tags %}
+    <li><a href="{{ tag.url | safe }}">{{ tag.name }}<span class="count">{{ tag.page_count }}</span></a></li>
+{% endfor %}
+</ul>
+{% else %}
+<p class="muted">No tags yet.</p>
+{% endif %}
+{% endblock content %}

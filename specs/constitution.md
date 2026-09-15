@@ -18,13 +18,13 @@ No CI config was found (no `.github/`, no other CI files). Every command below c
 | Lint | `cargo clippy --all-targets -- -D warnings` | `CLAUDE.md:75` (plain `cargo clippy` at `CLAUDE.md:36`; `[lints.clippy] all = "warn"` in `Cargo.toml:10-11`) |
 | Format (write) | `cargo fmt` | `CLAUDE.md:37` |
 | Format (check) | `cargo fmt --check` | `CLAUDE.md:75`, `README.md:110` |
-| Run against the fixture site (from `test/`) | `cd test && cargo run -- build` | `CLAUDE.md:40` |
-| Run against the fixture site (from repo root) | `cargo run -- build --site test/site --templates test/meta/templates --assets test/meta/assets -o test/dist` | `CLAUDE.md:42` |
+| Run against the fixture site (from `example/`) | `cd example && cargo run -- build` | `CLAUDE.md:40` |
+| Run against the fixture site (from repo root) | `cargo run -- build --site example/site --templates example/meta/templates --assets example/meta/assets -o example/dist` | `CLAUDE.md:42` |
 | Install | `cargo install --path .` | `README.md:10` |
 
 Toolchain: Rust `1.92.0` with rustfmt and clippy (`rust-toolchain.toml:2-3`), edition 2024 (`Cargo.toml:4`).
 
-**Path gotcha:** CLI paths are relative to the current directory. The defaults are `site/`, `meta/templates/`, `meta/assets/`, `dist/` and `mango.json`. None of these exist at the repo root; the sample site is under `test/` (`CLAUDE.md:45`).
+**Path gotcha:** CLI paths are relative to the current directory. The defaults are `site/`, `meta/templates/`, `meta/assets/`, `dist/` and `mango.json`. None of these exist at the repo root; the sample site is under `example/` (`CLAUDE.md:45`).
 
 ## Conventions
 - **Errors:** return `MangoError` via `?`. Where a category exists, add a variant to `src/error.rs` instead of using ad-hoc strings (`CLAUDE.md:66`). Seen in `src/config.rs` and `src/content/loader.rs`.
@@ -32,7 +32,7 @@ Toolchain: Rust `1.92.0` with rustfmt and clippy (`rust-toolchain.toml:2-3`), ed
 - **CLI:** clap derive style (`CLAUDE.md:67`). Seen in `src/cli.rs:20-84`.
 - **Unit tests:** go in `#[cfg(test)] mod tests` next to the code. Filesystem fixtures are created per test under `target/unit-fixtures/<module>/...` (`CLAUDE.md:68`). Seen in `src/config.rs`, `src/content/loader.rs` and `src/build/output.rs`.
 - **E2E tests:** live in `tests/build.rs` and run the compiled binary. They build either the fixture (once, via `fixture_dist()` into `target/integration-dist`) or per-test temp sites under `CARGO_TARGET_TMPDIR`. They check exit status, stderr and output files, and reuse the existing helpers (`run_mango`, `temp_dir`, `build_temp_site`, `build_with`, `snapshot`, `assert_success`, `assert_failure`, `assert_previous_output_intact`, `built_site_with_private_templates`) (`CLAUDE.md:68`; `tests/build.rs`).
-- **Fixtures:** `test/site`, `test/meta` and `test/mango.json` are committed and cover every success-path feature. `build_generates_site_from_fixture` checks the exact output manifest, and the `fixture_*` tests check the rest. Error-case files never go in the fixture; they are built in test code. `test/dist` is generated and gitignored (`CLAUDE.md:69`, `.gitignore:2`).
+- **Fixtures:** `example/site`, `example/meta` and `example/mango.json` are committed and cover every success-path feature. `build_generates_site_from_fixture` checks the exact output manifest, and the `fixture_*` tests check the rest. Error-case files never go in the fixture; they are built in test code. `example/dist` is generated and gitignored (`CLAUDE.md:69`, `.gitignore:2`).
 - **Build pipeline order:** load, plan assets, build render items and generated files, check collisions, render everything in memory, run the safety check, and only then clean and write. New outputs must go through `output::check_collisions` and be rendered before anything is cleaned (`CLAUDE.md:49-51`; `build()` in `src/cli.rs`).
 - **Strict inputs:** dates, tags, file names and `base_url` are validated strictly. Bad values fail the build with an error naming the file and the value. Drafts are validated too (`CLAUDE.md:7-11, 29`).
 - **Feed and sitemap** are generated in Rust, not Tera. XML escaping goes through `build/generate/xml.rs` (`CLAUDE.md:13`, `CLAUDE.md:62`).
@@ -73,7 +73,7 @@ From the documented "Definition of done" (`CLAUDE.md:71-82`) and the maintainer'
 ## Related docs
 - `CLAUDE.md`: architecture, pipeline order, template contexts, module map, conventions and the definition of done. This is the authoritative developer doc.
 - `README.md`: the user guide (commands and flags, content rules, config, output URLs, templates, safe builds, known limitations).
-- `test/mango.json`, `test/site/`, `test/meta/`: the fixture site that shows every success-path feature.
+- `example/mango.json`, `example/site/`, `example/meta/`: the fixture site that shows every success-path feature.
 - `LICENSE`: GPL-3.0-or-later.
 - `.claude/pipeline/workflows/*.yaml`, `.claude/commands/*.md`: dev-pipeline workflow definitions.
 
