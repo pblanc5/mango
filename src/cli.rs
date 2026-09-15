@@ -40,20 +40,6 @@ struct BuildOpts {
     config: Option<String>,
 }
 
-// The dev server is future work; the options are kept so the CLI surface
-// stays stable, but nothing reads them yet.
-#[allow(dead_code)]
-#[derive(Args, Debug)]
-struct ServerOpts {
-    /// Address for the dev server
-    #[arg(short, long, default_value = "127.0.0.1")]
-    address: String,
-
-    /// Port for the dev server
-    #[arg(short, long, default_value = "8080")]
-    port: u16,
-}
-
 #[derive(Args, Debug)]
 struct CleanOpts {
     /// Output directory to remove
@@ -67,7 +53,7 @@ enum MangoActions {
     Build(BuildOpts),
 
     /// Run the dev server (not implemented yet)
-    Run(ServerOpts),
+    Run,
 
     /// Publish the site (not implemented yet)
     Publish,
@@ -90,7 +76,7 @@ pub fn run() -> Result<(), MangoError> {
     match args.command {
         MangoActions::Build(opts) => build(project_path, opts),
 
-        MangoActions::Run(_) => Err(not_implemented("run")),
+        MangoActions::Run => Err(not_implemented("run")),
 
         MangoActions::Publish => Err(not_implemented("publish")),
 

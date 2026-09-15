@@ -1631,6 +1631,58 @@ fn run_command_is_not_implemented_error() {
     );
 }
 
+// `run` has no options until it is implemented (no dead flags).
+#[test]
+fn run_command_takes_no_options() {
+    let dir = temp_dir("run_command_takes_no_options");
+    let output = run_mango(&["run", "--port", "8080"], &dir);
+
+    assert_failure(&output, "run --port");
+    assert!(
+        stderr(&output).contains("unexpected argument '--port'"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+// Two builds of the same input are byte-identical.
+#[test]
+fn fixture_build_is_deterministic() {
+    let first = fixture_dist();
+    let second = temp_dir("fixture_build_is_deterministic").join("dist");
+
+    let output = run_mango(
+        &[
+            "build",
+            "--site",
+            "test/site",
+            "--templates",
+            "test/meta/templates",
+            "--assets",
+            "test/meta/assets",
+            "-o",
+            second.to_str().unwrap(),
+            "--config",
+            "test/mango.json",
+        ],
+        &root(),
+    );
+    assert_success(&output);
+
+    let files = snapshot(first);
+    assert_eq!(
+        files,
+        snapshot(&second),
+        "the two builds wrote different files"
+    );
+    for file in &files {
+        assert!(
+            fs::read(first.join(file)).unwrap() == fs::read(second.join(file)).unwrap(),
+            "{file} differs between two builds of the same input"
+        );
+    }
+}
+
 // AC-7.3
 #[test]
 fn publish_command_is_not_implemented_error() {
