@@ -1645,6 +1645,183 @@ fn publish_command_is_not_implemented_error() {
     );
 }
 
+// Every root-relative href/src in the fixture output points at a file that
+// was written: the broken-link check a crawler would do.
+#[test]
+fn fixture_internal_links_resolve() {
+    let out = fixture_dist();
+    let mut checked = 0;
+
+    for file in snapshot(out).into_iter().filter(|f| f.ends_with(".html")) {
+        let html = fs::read_to_string(out.join(&file)).unwrap();
+        for attr in ["href=\"", "src=\""] {
+            for rest in html.split(attr).skip(1) {
+                let target = rest.split('"').next().unwrap();
+                if !target.starts_with('/') {
+                    continue; // external links and in-page anchors
+                }
+                let path = target
+                    .split(['#', '?'])
+                    .next()
+                    .unwrap()
+                    .trim_start_matches('/');
+                let resolved = if path.is_empty() || path.ends_with('/') {
+                    out.join(path).join("index.html")
+                } else {
+                    out.join(path)
+                };
+                assert!(resolved.is_file(), "{file}: broken link '{target}'");
+                checked += 1;
+            }
+        }
+    }
+
+    assert!(checked > 100, "only {checked} internal links checked");
+}
+
+#[test]
+fn build_fails_on_file_vs_folder_conflict_keeping_output() {
+    let dir = temp_dir("build_fails_on_file_vs_folder_conflict_keeping_output");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    let config = dir.join("mango.json");
+    write_file(&config, r#"{"base_url": "https://example.com"}"#);
+    write_file(&site.join("posts/one.md"), &page("One", false));
+    assert_success(&build_temp_site_with_config(&site, &out, &config));
+    let before = snapshot(&out);
+
+    // dist/feed.xml/index.html would need dist/feed.xml to be a directory.
+    write_file(&site.join("feed.xml.md"), &page("Feed Page", false));
+    let output = build_temp_site_with_config(&site, &out, &config);
+
+    assert_failure(&output, "feed.xml.md vs feed.xml");
+    let err = stderr(&output);
+    assert!(
+        err.contains("written as a file by RSS feed, but page 'feed.xml'"),
+        "{err}"
+    );
+    assert_eq!(
+        snapshot(&out),
+        before,
+        "a conflict must not touch the output"
+    );
+}
+
+#[test]
+fn build_fails_when_page_lands_on_an_asset_keeping_output() {
+    let dir = temp_dir("build_fails_when_page_lands_on_an_asset_keeping_output");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    write_file(&site.join("posts/one.md"), &page("One", false));
+    assert_success(&build_temp_site(&site, &out));
+    let before = snapshot(&out);
+
+    // The fixture assets contain minimal/main.css, copied to assets/minimal/main.css.
+    write_file(
+        &site.join("assets/minimal/main.css.md"),
+        &page("Clash", false),
+    );
+    let output = build_temp_site(&site, &out);
+
+    assert_failure(&output, "page nested under an asset file");
+    let err = stderr(&output);
+    assert!(err.contains("asset 'minimal/main.css'"), "{err}");
+    assert!(err.contains("page 'assets/minimal/main.css'"), "{err}");
+    assert_eq!(
+        snapshot(&out),
+        before,
+        "a conflict must not touch the output"
+    );
+}
+
+#[test]
+fn build_fails_on_missing_assets_folder_keeping_output() {
+    let root = root();
+    let dir = temp_dir("build_fails_on_missing_assets_folder_keeping_output");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    write_file(&site.join("posts/one.md"), &page("One", false));
+    assert_success(&build_temp_site(&site, &out));
+    let before = snapshot(&out);
+
+    let output = build_with(
+        &site,
+        &root.join("test/meta/templates"),
+        &dir.join("missing-assets"),
+        &out,
+    );
+
+    assert_failure(&output, "missing assets folder");
+    assert!(
+        stderr(&output).contains("missing-assets"),
+        "{}",
+        stderr(&output)
+    );
+    assert_eq!(snapshot(&out), before, "missing assets changed output");
+}
+
+#[test]
+fn build_accepts_any_case_md_and_markdown_extensions() {
+    let dir = temp_dir("build_accepts_any_case_md_and_markdown_extensions");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    write_file(&site.join("one.md"), &page("One", false));
+    write_file(&site.join("upper.MD"), &page("Upper", false));
+    write_file(&site.join("long.markdown"), &page("Long", false));
+    write_file(&site.join("mixed.Markdown"), &page("Mixed", false));
+    write_file(&site.join("notes.txt"), "not a page");
+
+    assert_success(&build_temp_site(&site, &out));
+    for slug in ["one", "upper", "long", "mixed"] {
+        assert!(
+            out.join(slug).join("index.html").is_file(),
+            "{slug}: {:?}",
+            snapshot(&out)
+        );
+    }
+    assert!(!out.join("notes").exists());
+}
+
+#[test]
+fn build_fails_on_invalid_file_name_naming_file() {
+    for (i, (name, segment, draft)) in [
+        ("my posts/one.md", "my posts", false),
+        ("héllo.md", "héllo", true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let dir = temp_dir(&format!("build_fails_on_invalid_file_name_{i}"));
+        let site = dir.join("site");
+        write_file(&site.join(name), &page("Bad", draft));
+
+        let output = build_temp_site(&site, &dir.join("dist"));
+
+        assert_failure(&output, name);
+        let err = stderr(&output);
+        assert!(
+            err.contains(&format!("invalid file name '{segment}'")),
+            "{err}"
+        );
+        assert!(!dir.join("dist").exists(), "{name}: nothing may be written");
+    }
+}
+
+#[test]
+fn build_accepts_utf8_bom_before_frontmatter() {
+    let dir = temp_dir("build_accepts_utf8_bom_before_frontmatter");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    write_file(
+        &site.join("bom.md"),
+        &format!("\u{feff}{}", page("Bom", false)),
+    );
+
+    assert_success(&build_temp_site(&site, &out));
+    let html = fs::read_to_string(out.join("bom/index.html")).unwrap();
+    assert!(html.contains("<h1>Bom</h1>"), "{html}");
+}
+
 fn list_files(dir: &PathBuf) -> Vec<String> {
     let mut files = Vec::new();
     if let Ok(entries) = fs::read_dir(dir) {

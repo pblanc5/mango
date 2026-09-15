@@ -1,8 +1,24 @@
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use crate::error::MangoError;
 
-pub fn build(assets_source: &Path, asset_dest: &Path) -> Result<(), MangoError> {
+/// One asset file to copy into the output.
+#[derive(Debug)]
+pub struct AssetFile {
+    pub source: PathBuf,
+    /// Final path under the output folder.
+    pub dest: PathBuf,
+    /// Human-readable origin, used in collision errors: `asset '<relative path>'`.
+    pub label: String,
+}
+
+/// Lists every file under `assets_source` (recursively, sorted by
+/// destination) without copying anything, so a missing assets folder and
+/// output conflicts are caught before the output folder is cleaned.
+pub fn plan(assets_source: &Path, asset_dest: &Path) -> Result<Vec<AssetFile>, MangoError> {
     if !assets_source.is_dir() {
         let msg = format!(
             "the path '{}' is not a directory",
@@ -11,25 +27,53 @@ pub fn build(assets_source: &Path, asset_dest: &Path) -> Result<(), MangoError> 
         return Err(MangoError::General(msg));
     }
 
-    fs::create_dir_all(asset_dest).map_err(|e| MangoError::io_at(asset_dest, e))?;
+    let mut files = Vec::new();
+    collect(assets_source, assets_source, asset_dest, &mut files)?;
+    files.sort_by(|a, b| a.dest.cmp(&b.dest));
+    Ok(files)
+}
 
-    let children = fs::read_dir(assets_source).map_err(|e| MangoError::io_at(assets_source, e))?;
-    for child in children {
-        let child = child.map_err(|e| MangoError::io_at(assets_source, e))?;
-        let filename = &child.file_name();
-        let name = Path::new(filename);
-        let source_path = child.path();
-        let dest_path = asset_dest.join(name);
-
+fn collect(
+    root: &Path,
+    dir: &Path,
+    asset_dest: &Path,
+    files: &mut Vec<AssetFile>,
+) -> Result<(), MangoError> {
+    for child in fs::read_dir(dir).map_err(|e| MangoError::io_at(dir, e))? {
+        let child = child.map_err(|e| MangoError::io_at(dir, e))?;
+        let source = child.path();
         let file_type = child
             .file_type()
-            .map_err(|e| MangoError::io_at(&source_path, e))?;
+            .map_err(|e| MangoError::io_at(&source, e))?;
         if file_type.is_dir() {
-            build(&source_path, &dest_path)?;
+            collect(root, &source, asset_dest, files)?;
             continue;
         }
 
-        fs::copy(&source_path, &dest_path).map_err(|e| MangoError::io_at(&source_path, e))?;
+        let rel = source.strip_prefix(root).map_err(|_| {
+            MangoError::General(format!(
+                "asset '{}' is outside the assets folder '{}'",
+                source.display(),
+                root.display()
+            ))
+        })?;
+        files.push(AssetFile {
+            dest: asset_dest.join(rel),
+            label: format!("asset '{}'", rel.to_string_lossy().replace('\\', "/")),
+            source,
+        });
+    }
+
+    Ok(())
+}
+
+/// Copies planned assets, creating parent folders. Any failure fails the build.
+pub fn copy(files: &[AssetFile]) -> Result<(), MangoError> {
+    for file in files {
+        if let Some(parent) = file.dest.parent() {
+            fs::create_dir_all(parent).map_err(|e| MangoError::io_at(parent, e))?;
+        }
+        fs::copy(&file.source, &file.dest).map_err(|e| MangoError::io_at(&file.source, e))?;
     }
 
     Ok(())
@@ -38,7 +82,6 @@ pub fn build(assets_source: &Path, asset_dest: &Path) -> Result<(), MangoError> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     fn fixture_dir(test_name: &str) -> PathBuf {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -72,7 +115,7 @@ mod tests {
             write_file(&src.join(f), f);
         }
 
-        build(&src, &dest).unwrap();
+        copy(&plan(&src, &dest).unwrap()).unwrap();
 
         for f in files {
             let copied = dest.join(f);
@@ -91,7 +134,33 @@ mod tests {
         // Destination already exists as a directory, so the copy must fail.
         fs::create_dir_all(dest.join("style.css")).unwrap();
 
-        let err = build(&src, &dest).expect_err("copy onto a directory must fail");
+        let err = copy(&plan(&src, &dest).unwrap()).expect_err("copy onto a directory must fail");
         assert!(err.to_string().contains("style.css"), "{err}");
+    }
+
+    #[test]
+    fn plan_is_sorted_labelled_and_touches_nothing() {
+        let dir = fixture_dir("plan_is_sorted");
+        let src = dir.join("src");
+        let dest = dir.join("dest");
+        write_file(&src.join("z.txt"), "z");
+        write_file(&src.join("a/b.css"), "b");
+
+        let files = plan(&src, &dest).unwrap();
+
+        let labels: Vec<_> = files.iter().map(|f| f.label.as_str()).collect();
+        assert_eq!(labels, ["asset 'a/b.css'", "asset 'z.txt'"]);
+        assert_eq!(files[0].dest, dest.join("a/b.css"));
+        assert!(!dest.exists(), "plan must not create the destination");
+    }
+
+    #[test]
+    fn plan_fails_on_missing_assets_folder() {
+        let dir = fixture_dir("plan_missing_folder");
+        let missing = dir.join("nope");
+
+        let err = plan(&missing, &dir.join("dest")).expect_err("missing assets folder");
+        assert!(matches!(err, MangoError::General(_)), "{err:?}");
+        assert!(err.to_string().contains("nope"), "{err}");
     }
 }

@@ -133,6 +133,9 @@ fn build(project_path: &Path, opts: BuildOpts) -> Result<(), MangoError> {
             return Err(MangoError::General(msg));
         }
     };
+    // Listed now, copied last: a missing assets folder or an asset that
+    // clashes with a page must fail before cleaning.
+    let asset_files = assets::plan(assets, &asset_dest)?;
 
     let page_items = content::build(&pages, &config)?;
     let si = index::section::build_section_index(&pages);
@@ -159,7 +162,7 @@ fn build(project_path: &Path, opts: BuildOpts) -> Result<(), MangoError> {
     .flatten()
     .collect();
 
-    output::check_collisions(dist, html_items(), &generated)?;
+    output::check_collisions(dist, html_items(), &generated, &asset_files)?;
 
     let rendered_pages = output::render(&tera, dist, &page_items)?;
     let rendered_sections = output::render(&tera, dist, &section_items)?;
@@ -181,7 +184,7 @@ fn build(project_path: &Path, opts: BuildOpts) -> Result<(), MangoError> {
     output::write(&rendered_tags)?;
     output::write(&rendered_generated)?;
 
-    assets::build(assets, &asset_dest)?;
+    assets::copy(&asset_files)?;
 
     Ok(())
 }

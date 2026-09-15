@@ -42,6 +42,9 @@ impl Page {
         })
     }
 
+    /// Sets the slug from the path relative to the site folder, without the
+    /// extension. Every segment may only use ASCII letters, digits, `-`, `_`
+    /// and `.`, so page URLs, the feed and the sitemap need no encoding.
     pub fn generate_slug(&mut self, path: &Path, site: &Path) -> Result<(), MangoError> {
         let slug = path
             .strip_prefix(site)
@@ -50,9 +53,24 @@ impl Page {
             .to_string_lossy()
             .replace('\\', "/");
 
+        if let Some(segment) = slug.split('/').find(|s| !is_valid_slug_segment(s)) {
+            let msg = format!(
+                "{}: invalid file name '{segment}': use only ASCII letters, digits, '-', '_' and '.'",
+                path.display()
+            );
+            return Err(MangoError::General(msg));
+        }
+
         self.slug = slug;
         Ok(())
     }
+}
+
+fn is_valid_slug_segment(segment: &str) -> bool {
+    !segment.is_empty()
+        && segment
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
 
 /// Root-relative URL for a page or section slug: `"/<slug>/"`, or `"/"` for
@@ -174,6 +192,33 @@ mod tests {
         let result = page.generate_slug(Path::new("elsewhere/post.md"), Path::new("site"));
 
         assert!(matches!(result, Err(MangoError::General(_))));
+    }
+
+    #[test]
+    fn generate_slug_accepts_safe_names_and_rejects_others() {
+        for ok in ["site/posts/post_one.md", "site/A-b_c/v1.2.md"] {
+            let mut page = Page::new(frontmatter(), String::new(), PageType::General).unwrap();
+            page.generate_slug(Path::new(ok), Path::new("site"))
+                .unwrap_or_else(|e| panic!("{ok}: {e}"));
+        }
+
+        for (bad, segment) in [
+            ("site/my posts/one.md", "my posts"),
+            ("site/héllo.md", "héllo"),
+            ("site/a+b.md", "a+b"),
+        ] {
+            let mut page = Page::new(frontmatter(), String::new(), PageType::General).unwrap();
+            let err = page
+                .generate_slug(Path::new(bad), Path::new("site"))
+                .expect_err(bad);
+            assert!(matches!(err, MangoError::General(_)), "{bad}: {err:?}");
+            let msg = err.to_string();
+            assert!(msg.contains(bad), "{msg}");
+            assert!(
+                msg.contains(&format!("invalid file name '{segment}'")),
+                "{msg}"
+            );
+        }
     }
 
     // AC-5.1, AC-5.3, AC-5.5

@@ -8,8 +8,8 @@ use crate::{
     error::MangoError,
 };
 
-/// Loads every `.md` page under `path` (recursively). Any read or parse error
-/// fails the whole load. Draft pages are parsed but not returned.
+/// Loads every markdown page under `path` (recursively). Any read or parse
+/// error fails the whole load. Draft pages are parsed but not returned.
 pub fn load(path: &Path) -> Result<Vec<Page>, MangoError> {
     if !path.is_dir() {
         let msg = format!("{} is not a directory", path.display());
@@ -32,7 +32,7 @@ fn traverse(site: &Path, dir: &Path, pages: &mut Vec<Page>) -> Result<(), MangoE
             continue;
         }
 
-        if !path.is_file() || path.extension().is_none_or(|ext| ext != "md") {
+        if !path.is_file() || !is_markdown(path) {
             continue;
         }
 
@@ -54,13 +54,23 @@ fn traverse(site: &Path, dir: &Path, pages: &mut Vec<Page>) -> Result<(), MangoE
             }
 
             None => {
-                let msg = format!("failed to generate frontmatter for page {}", path.display());
+                let msg = format!(
+                    "{}: missing frontmatter: the file must start with a '---' line, a JSON object and a closing '---' line",
+                    path.display()
+                );
                 return Err(MangoError::Frontmatter(msg));
             }
         };
     }
 
     Ok(())
+}
+
+/// `.md` and `.markdown` files, in any letter case, are pages.
+fn is_markdown(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown"))
 }
 
 #[cfg(test)]
@@ -96,7 +106,9 @@ mod tests {
         write_file(&site.join("posts/good.md"), &page("Good", false));
 
         let err = load(&site).expect_err("missing frontmatter must fail the load");
-        assert!(err.to_string().contains("bad.md"), "{err}");
+        let msg = err.to_string();
+        assert!(msg.contains("bad.md"), "{msg}");
+        assert!(msg.contains("missing frontmatter"), "{msg}");
     }
 
     // AC-1.2
@@ -266,5 +278,30 @@ mod tests {
         let pages = load(&site).unwrap();
         let slugs: Vec<_> = pages.iter().map(|p| p.slug.as_str()).collect();
         assert_eq!(slugs, vec!["notes.md/inner"]);
+    }
+
+    #[test]
+    fn markdown_extensions_in_any_case_are_pages() {
+        let site = fixture_dir("markdown_extensions_in_any_case");
+        for name in ["a.md", "b.MD", "c.markdown", "d.MarkDown"] {
+            write_file(&site.join(name), &page(name, false));
+        }
+        write_file(&site.join("e.txt"), "not a page");
+        write_file(&site.join("f.mdx"), "not a page");
+
+        let mut slugs: Vec<_> = load(&site).unwrap().into_iter().map(|p| p.slug).collect();
+        slugs.sort();
+        assert_eq!(slugs, ["a", "b", "c", "d"]);
+    }
+
+    #[test]
+    fn invalid_file_name_is_an_error_naming_the_file_even_for_drafts() {
+        let site = fixture_dir("invalid_file_name");
+        write_file(&site.join("my posts/draft.md"), &page("Draft", true));
+
+        let err = load(&site).expect_err("a space in a folder name must fail the load");
+        let msg = err.to_string();
+        assert!(msg.contains("draft.md"), "{msg}");
+        assert!(msg.contains("invalid file name 'my posts'"), "{msg}");
     }
 }

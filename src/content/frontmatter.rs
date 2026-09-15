@@ -3,6 +3,7 @@ use serde::Deserialize;
 use crate::error::MangoError;
 
 const FRONTMATTER_DELIMITER: &str = "---";
+const BYTE_ORDER_MARK: char = '\u{feff}';
 
 #[derive(Deserialize, Debug)]
 pub struct MangoFrontmatter {
@@ -14,7 +15,13 @@ pub struct MangoFrontmatter {
     pub draft: bool,
 }
 
+/// Splits a leading `---` JSON `---` block from the markdown body. A UTF-8
+/// byte order mark (added by some Windows editors) is ignored.
 pub fn parse(content: String) -> Result<(Option<MangoFrontmatter>, String), MangoError> {
+    let content = match content.strip_prefix(BYTE_ORDER_MARK) {
+        Some(rest) => rest.to_owned(),
+        None => content,
+    };
     let mut lines = content.lines();
 
     if lines.next().map(|l| l.trim()) != Some(FRONTMATTER_DELIMITER) {
@@ -66,6 +73,15 @@ mod tests {
         assert_eq!(fm.tags, Some(vec!["blog".to_string()]));
         assert!(!fm.draft);
         assert_eq!(body, "# Hello\n\nworld");
+    }
+
+    #[test]
+    fn byte_order_mark_is_ignored() {
+        let content = format!("\u{feff}---\n{VALID_JSON}\n---\nbody");
+        let (fm, body) = parse(content).unwrap();
+
+        assert_eq!(fm.expect("frontmatter behind a BOM").title, "Post One");
+        assert_eq!(body, "body");
     }
 
     #[test]

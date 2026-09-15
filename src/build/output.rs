@@ -4,7 +4,7 @@ use std::{
 };
 use tera::Tera;
 
-use crate::{error::MangoError, render::template::RenderItem};
+use crate::{build::generate::assets::AssetFile, error::MangoError, render::template::RenderItem};
 
 /// A fully rendered output file, held in memory until it is written.
 /// `html` may also hold non-HTML contents (the feed and sitemap XML).
@@ -23,15 +23,20 @@ pub struct GeneratedFile {
     pub contents: String,
 }
 
-/// Fails if two outputs would write the same file. Render items are checked
-/// first, in the given order, then generated files, so the first source seen
-/// is reported first.
+/// Fails if two outputs would write the same file, or if one output would be
+/// a file where another needs a directory (`dist/feed.xml` next to
+/// `dist/feed.xml/index.html`). Render items are checked first, in the given
+/// order, then generated files, then asset files, so the first source seen is
+/// reported first. Runs before cleaning, so a conflict never loses the
+/// previous output.
 pub fn check_collisions<'a>(
     dist: &Path,
     items: impl IntoIterator<Item = &'a RenderItem>,
     files: &'a [GeneratedFile],
+    assets: &'a [AssetFile],
 ) -> Result<(), MangoError> {
     let mut seen: HashMap<PathBuf, &str> = HashMap::new();
+    let mut order: Vec<(PathBuf, &str)> = Vec::new();
 
     let outputs = items
         .into_iter()
@@ -40,6 +45,11 @@ pub fn check_collisions<'a>(
             files
                 .iter()
                 .map(|file| (dist.join(&file.path), file.source.as_str())),
+        )
+        .chain(
+            assets
+                .iter()
+                .map(|asset| (asset.dest.clone(), asset.label.as_str())),
         );
 
     for (path, source) in outputs {
@@ -52,7 +62,26 @@ pub fn check_collisions<'a>(
             );
             return Err(MangoError::General(msg));
         }
-        seen.insert(path, source);
+        seen.insert(path.clone(), source);
+        order.push((path, source));
+    }
+
+    for (path, source) in &order {
+        for ancestor in path.ancestors().skip(1) {
+            if ancestor == dist {
+                break;
+            }
+            if let Some(file_source) = seen.get(ancestor) {
+                let msg = format!(
+                    "output path '{}' would be written as a file by {}, but {} needs it to be a directory for '{}'",
+                    ancestor.display(),
+                    file_source,
+                    source,
+                    path.display()
+                );
+                return Err(MangoError::General(msg));
+            }
+        }
     }
 
     Ok(())
@@ -138,6 +167,14 @@ mod tests {
         }
     }
 
+    fn asset(rel: &str) -> AssetFile {
+        AssetFile {
+            source: Path::new("assets-src").join(rel),
+            dest: Path::new("dist").join("assets").join(rel),
+            label: format!("asset '{rel}'"),
+        }
+    }
+
     fn page(slug: &str) -> RenderItem {
         item(slug, &format!("page '{slug}'"), "t.html")
     }
@@ -153,7 +190,7 @@ mod tests {
         let pages = [page("posts")];
         let sections = [section("posts")];
 
-        let err = check_collisions(dist, pages.iter().chain(sections.iter()), &[])
+        let err = check_collisions(dist, pages.iter().chain(sections.iter()), &[], &[])
             .expect_err("page and section index share an output path");
         assert!(matches!(err, MangoError::General(_)), "{err:?}");
         let msg = err.to_string();
@@ -168,7 +205,13 @@ mod tests {
     fn index_md_is_not_a_collision() {
         let pages = [page("posts/index"), page("posts/one")];
         let sections = [section("posts")];
-        check_collisions(Path::new("dist"), pages.iter().chain(sections.iter()), &[]).unwrap();
+        check_collisions(
+            Path::new("dist"),
+            pages.iter().chain(sections.iter()),
+            &[],
+            &[],
+        )
+        .unwrap();
     }
 
     // AC-3.4
@@ -176,7 +219,13 @@ mod tests {
     fn distinct_paths_pass() {
         let pages = [page("a/one"), page("a/two"), page("b")];
         let sections = [section("a")];
-        check_collisions(Path::new("dist"), pages.iter().chain(sections.iter()), &[]).unwrap();
+        check_collisions(
+            Path::new("dist"),
+            pages.iter().chain(sections.iter()),
+            &[],
+            &[],
+        )
+        .unwrap();
     }
 
     // AC-2.1, AC-2.5 (batch 3)
@@ -192,11 +241,13 @@ mod tests {
             dist,
             pages.iter().chain(sections.iter()).chain([&home]),
             &[],
+            &[],
         )
         .unwrap();
 
         let other = item("", "other root", "t.html");
-        let err = check_collisions(dist, [&home, &other], &[]).expect_err("two root items collide");
+        let err =
+            check_collisions(dist, [&home, &other], &[], &[]).expect_err("two root items collide");
         let msg = err.to_string();
         assert!(
             msg.contains(&dist.join("index.html").display().to_string()),
@@ -216,11 +267,11 @@ mod tests {
             generated("feed.xml", "RSS feed"),
             generated("sitemap.xml", "sitemap"),
         ];
-        check_collisions(dist, &items, &files).unwrap();
+        check_collisions(dist, &items, &files, &[]).unwrap();
 
         // A generated file at a render item's path: item named first.
         let clash = [generated("posts/one/index.html", "RSS feed")];
-        let err = check_collisions(dist, &items, &clash).expect_err("file vs item");
+        let err = check_collisions(dist, &items, &clash, &[]).expect_err("file vs item");
         assert!(matches!(err, MangoError::General(_)), "{err:?}");
         let msg = err.to_string();
         let path = dist.join("posts").join("one").join("index.html");
@@ -237,13 +288,58 @@ mod tests {
             generated("feed.xml", "RSS feed"),
             generated("feed.xml", "sitemap"),
         ];
-        let err = check_collisions(dist, &items, &twice).expect_err("file vs file");
+        let err = check_collisions(dist, &items, &twice, &[]).expect_err("file vs file");
         let msg = err.to_string();
         assert!(
             msg.contains(&dist.join("feed.xml").display().to_string()),
             "{msg}"
         );
         assert!(msg.contains("both RSS feed and sitemap"), "{msg}");
+    }
+
+    #[test]
+    fn file_vs_directory_conflict_is_detected() {
+        let dist = Path::new("dist");
+        let items = [page("feed.xml")];
+        let files = [generated("feed.xml", "RSS feed")];
+
+        let err = check_collisions(dist, &items, &files, &[])
+            .expect_err("feed.xml is needed as both a file and a directory");
+        assert!(matches!(err, MangoError::General(_)), "{err:?}");
+        let msg = err.to_string();
+        assert!(
+            msg.contains(&format!("'{}'", dist.join("feed.xml").display())),
+            "{msg}"
+        );
+        assert!(
+            msg.contains("written as a file by RSS feed, but page 'feed.xml'"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn asset_conflicts_are_detected() {
+        let dist = Path::new("dist");
+        let assets = [asset("index.html"), asset("minimal/main.css")];
+
+        // A section index next to an asset is fine.
+        check_collisions(dist, &[section("assets/minimal")], &[], &assets).unwrap();
+
+        // A page nested under an asset file.
+        let err = check_collisions(dist, &[page("assets/minimal/main.css")], &[], &assets)
+            .expect_err("page nested under an asset file");
+        let msg = err.to_string();
+        assert!(msg.contains("asset 'minimal/main.css'"), "{msg}");
+        assert!(msg.contains("page 'assets/minimal/main.css'"), "{msg}");
+
+        // A page written to the same path as an asset.
+        let err = check_collisions(dist, &[page("assets")], &[], &assets)
+            .expect_err("page on an asset path");
+        assert!(
+            err.to_string()
+                .contains("both page 'assets' and asset 'index.html'"),
+            "{err}"
+        );
     }
 
     // AC-5.2 (batch 4)
