@@ -10,11 +10,18 @@
 
     <meta name="viewport" content="width=device-width, initial-scale=1">
 
-    {% if page is defined and page.description is defined %}
+    {% if page is defined %}
     <meta name="description" content="{{ page.description }}">
+    {% elif config.description %}
+    <meta name="description" content="{{ config.description }}">
     {% endif %}
 
+    <link rel="icon" type="image/svg+xml" href="/assets/images/logo.svg">
     <link rel="stylesheet" href="/assets/minimal/main.css">
+
+    {% if config.base_url %}
+    <link rel="alternate" type="application/rss+xml" href="/feed.xml">
+    {% endif %}
 
     {% block head %}
     {# extra head content per page #}
@@ -24,8 +31,11 @@
 <body>
     <header>
         <nav>
-            <a href="/">home</a>
+            <a href="/"><img src="/assets/images/logo.svg" alt="" width="24" height="24"> home</a>
             <a href="/posts/">posts</a>
+            <a href="/docs/">docs</a>
+            <a href="/tags/">tags</a>
+            <a href="/about/">about</a>
         </nav>
     </header>
 

@@ -2,6 +2,9 @@
 
 {% block content %}
 <h1>{{ config.title | default(value="My Site") }}</h1>
+{% if config.description %}
+<p class="site-description">{{ config.description }}</p>
+{% endif %}
 
 <h2>Recent</h2>
 <ul class="recent-list">

@@ -9,6 +9,4 @@
 }
 ---
 
-# Post One
-
 hey all, this is my first post.

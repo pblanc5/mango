@@ -9,7 +9,7 @@
 }
 ---
 
-# Markdown: Syntax
+## Markdown: Syntax
 
 *   [Overview](#overview)
     *   [Philosophy](#philosophy)
@@ -32,8 +32,7 @@
     *   [Automatic Links](#autolink)
 
 
-**Note:** This document is itself written using Markdown; you
-can [see the source for it by adding '.text' to the URL](/projects/markdown/syntax.text).
+**Note:** This document is itself written using Markdown.
 
 ----
 

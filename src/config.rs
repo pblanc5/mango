@@ -52,8 +52,29 @@ pub fn load(path: &Path, explicit: bool) -> Result<SiteConfig, MangoError> {
         Err(e) => return Err(MangoError::io_at(path, e)),
     };
 
-    serde_json::from_str(&content)
-        .map_err(|e| MangoError::Config(format!("'{}': {e}", path.display())))
+    let config: SiteConfig = serde_json::from_str(&content)
+        .map_err(|e| MangoError::Config(format!("'{}': {e}", path.display())))?;
+
+    if let Some(base_url) = &config.base_url
+        && !(base_url.starts_with("http://") || base_url.starts_with("https://"))
+    {
+        let msg = format!(
+            "'{}': invalid base_url '{base_url}': must start with http:// or https://",
+            path.display()
+        );
+        return Err(MangoError::Config(msg));
+    }
+
+    Ok(config)
+}
+
+/// `base_url` with trailing `/` characters removed, for joining with
+/// root-relative URLs (`/x/`) in generated absolute links. `None` when unset.
+pub fn base_url_root(config: &SiteConfig) -> Option<&str> {
+    config
+        .base_url
+        .as_deref()
+        .map(|url| url.trim_end_matches('/'))
 }
 
 #[cfg(test)]
@@ -163,6 +184,79 @@ mod tests {
                 "{value}: {err}"
             );
         }
+    }
+
+    // AC-4.1 (batch 4)
+    #[test]
+    fn base_url_accepts_http_and_https() {
+        for (i, value) in [
+            "https://example.com",
+            "https://example.com/",
+            "http://localhost:8080",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let path = write_config(
+                &format!("base_url_accepts_{i}"),
+                &format!(r#"{{"base_url": "{value}"}}"#),
+            );
+            let config = load(&path, true).unwrap();
+            assert_eq!(config.base_url.as_deref(), Some(*value), "kept as written");
+        }
+
+        let path = write_config("base_url_unset", r#"{"title": "T"}"#);
+        assert_eq!(load(&path, true).unwrap().base_url, None);
+    }
+
+    // AC-4.2 (batch 4)
+    #[test]
+    fn base_url_rejects_other_values_naming_file_and_value() {
+        for (i, value) in [
+            "",
+            "example.com",
+            "ftp://example.com",
+            "//example.com",
+            "HTTPS://example.com",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let path = write_config(
+                &format!("base_url_rejects_{i}"),
+                &format!(r#"{{"base_url": "{value}"}}"#),
+            );
+            let err = load(&path, true).expect_err(value);
+            assert!(matches!(err, MangoError::Config(_)), "{value}: {err:?}");
+            let msg = err.to_string();
+            let expected = format!(
+                "'{}': invalid base_url '{value}': must start with http:// or https://",
+                path.display()
+            );
+            assert!(msg.contains(&expected), "{value}: {msg}");
+        }
+    }
+
+    // AC-6.4, AC-7.5 (batch 4)
+    #[test]
+    fn base_url_root_trims_trailing_slashes() {
+        let with = |url: &str| SiteConfig {
+            base_url: Some(url.into()),
+            ..SiteConfig::default()
+        };
+        assert_eq!(
+            base_url_root(&with("https://example.com/")),
+            Some("https://example.com")
+        );
+        assert_eq!(
+            base_url_root(&with("https://example.com//")),
+            Some("https://example.com")
+        );
+        assert_eq!(
+            base_url_root(&with("https://example.com")),
+            Some("https://example.com")
+        );
+        assert_eq!(base_url_root(&SiteConfig::default()), None);
     }
 
     // AC-1.10

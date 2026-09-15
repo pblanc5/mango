@@ -7,34 +7,67 @@ use tera::Tera;
 use crate::{error::MangoError, render::template::RenderItem};
 
 /// A fully rendered output file, held in memory until it is written.
+/// `html` may also hold non-HTML contents (the feed and sitemap XML).
 pub struct RenderedFile {
     pub path: PathBuf,
     pub html: String,
 }
 
-/// Fails if two render items would write the same output file. Items are
-/// checked in the given order, so the first source seen is reported first.
+/// A non-template output file with an explicit path, generated in Rust
+/// (`feed.xml`, `sitemap.xml`).
+pub struct GeneratedFile {
+    /// Output path relative to the output folder.
+    pub path: PathBuf,
+    /// Human-readable origin, used in collision errors.
+    pub source: String,
+    pub contents: String,
+}
+
+/// Fails if two outputs would write the same file. Render items are checked
+/// first, in the given order, then generated files, so the first source seen
+/// is reported first.
 pub fn check_collisions<'a>(
     dist: &Path,
     items: impl IntoIterator<Item = &'a RenderItem>,
+    files: &'a [GeneratedFile],
 ) -> Result<(), MangoError> {
     let mut seen: HashMap<PathBuf, &str> = HashMap::new();
 
-    for item in items {
-        let path = get_final_path(dist, &item.slug);
+    let outputs = items
+        .into_iter()
+        .map(|item| (get_final_path(dist, &item.slug), item.source.as_str()))
+        .chain(
+            files
+                .iter()
+                .map(|file| (dist.join(&file.path), file.source.as_str())),
+        );
+
+    for (path, source) in outputs {
         if let Some(first) = seen.get(&path) {
             let msg = format!(
                 "output path '{}' would be written by both {} and {}",
                 path.display(),
                 first,
-                item.source
+                source
             );
             return Err(MangoError::General(msg));
         }
-        seen.insert(path, &item.source);
+        seen.insert(path, source);
     }
 
     Ok(())
+}
+
+/// Maps generated files to their final paths under `dist` without touching
+/// the filesystem.
+pub fn render_generated(dist: &Path, files: &[GeneratedFile]) -> Vec<RenderedFile> {
+    files
+        .iter()
+        .map(|file| RenderedFile {
+            path: dist.join(&file.path),
+            html: file.contents.clone(),
+        })
+        .collect()
 }
 
 /// Renders every item to a string without touching the filesystem. Any
@@ -93,6 +126,15 @@ mod tests {
             source: source.into(),
             template: template.into(),
             context,
+            page_date: None,
+        }
+    }
+
+    fn generated(path: &str, source: &str) -> GeneratedFile {
+        GeneratedFile {
+            path: PathBuf::from(path),
+            source: source.into(),
+            contents: format!("<{source}/>"),
         }
     }
 
@@ -111,7 +153,7 @@ mod tests {
         let pages = [page("posts")];
         let sections = [section("posts")];
 
-        let err = check_collisions(dist, pages.iter().chain(sections.iter()))
+        let err = check_collisions(dist, pages.iter().chain(sections.iter()), &[])
             .expect_err("page and section index share an output path");
         assert!(matches!(err, MangoError::General(_)), "{err:?}");
         let msg = err.to_string();
@@ -126,7 +168,7 @@ mod tests {
     fn index_md_is_not_a_collision() {
         let pages = [page("posts/index"), page("posts/one")];
         let sections = [section("posts")];
-        check_collisions(Path::new("dist"), pages.iter().chain(sections.iter())).unwrap();
+        check_collisions(Path::new("dist"), pages.iter().chain(sections.iter()), &[]).unwrap();
     }
 
     // AC-3.4
@@ -134,7 +176,7 @@ mod tests {
     fn distinct_paths_pass() {
         let pages = [page("a/one"), page("a/two"), page("b")];
         let sections = [section("a")];
-        check_collisions(Path::new("dist"), pages.iter().chain(sections.iter())).unwrap();
+        check_collisions(Path::new("dist"), pages.iter().chain(sections.iter()), &[]).unwrap();
     }
 
     // AC-2.1, AC-2.5 (batch 3)
@@ -146,16 +188,83 @@ mod tests {
 
         let pages = [page("posts/one")];
         let sections = [section("posts")];
-        check_collisions(dist, pages.iter().chain(sections.iter()).chain([&home])).unwrap();
+        check_collisions(
+            dist,
+            pages.iter().chain(sections.iter()).chain([&home]),
+            &[],
+        )
+        .unwrap();
 
         let other = item("", "other root", "t.html");
-        let err = check_collisions(dist, [&home, &other]).expect_err("two root items collide");
+        let err = check_collisions(dist, [&home, &other], &[]).expect_err("two root items collide");
         let msg = err.to_string();
         assert!(
             msg.contains(&dist.join("index.html").display().to_string()),
             "{msg}"
         );
         assert!(msg.contains("home page"), "{msg}");
+    }
+
+    // AC-5.1 (batch 4)
+    #[test]
+    fn generated_file_collides_with_render_item() {
+        let dist = Path::new("dist");
+        let items = [page("posts/one"), item("tags", "tag index", "tags.html")];
+
+        // Distinct paths pass.
+        let files = [
+            generated("feed.xml", "RSS feed"),
+            generated("sitemap.xml", "sitemap"),
+        ];
+        check_collisions(dist, &items, &files).unwrap();
+
+        // A generated file at a render item's path: item named first.
+        let clash = [generated("posts/one/index.html", "RSS feed")];
+        let err = check_collisions(dist, &items, &clash).expect_err("file vs item");
+        assert!(matches!(err, MangoError::General(_)), "{err:?}");
+        let msg = err.to_string();
+        let path = dist.join("posts").join("one").join("index.html");
+        assert_eq!(
+            msg,
+            format!(
+                "Mango Error: output path '{}' would be written by both page 'posts/one' and RSS feed",
+                path.display()
+            )
+        );
+
+        // Two generated files at the same path.
+        let twice = [
+            generated("feed.xml", "RSS feed"),
+            generated("feed.xml", "sitemap"),
+        ];
+        let err = check_collisions(dist, &items, &twice).expect_err("file vs file");
+        let msg = err.to_string();
+        assert!(
+            msg.contains(&dist.join("feed.xml").display().to_string()),
+            "{msg}"
+        );
+        assert!(msg.contains("both RSS feed and sitemap"), "{msg}");
+    }
+
+    // AC-5.2 (batch 4)
+    #[test]
+    fn render_generated_maps_paths_without_touching_fs() {
+        let dist = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target/unit-fixtures/output/render_generated_does_not_touch_fs");
+        let _ = fs::remove_dir_all(&dist);
+
+        let files = [
+            generated("feed.xml", "RSS feed"),
+            generated("sitemap.xml", "sitemap"),
+        ];
+        let rendered = render_generated(&dist, &files);
+
+        assert_eq!(rendered.len(), 2);
+        assert_eq!(rendered[0].path, dist.join("feed.xml"));
+        assert_eq!(rendered[0].html, "<RSS feed/>");
+        assert_eq!(rendered[1].path, dist.join("sitemap.xml"));
+        assert_eq!(rendered[1].html, "<sitemap/>");
+        assert!(!dist.exists(), "render_generated must not create files");
     }
 
     // AC-9.1

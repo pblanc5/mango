@@ -5,16 +5,26 @@ use crate::{
     render::template::{self, HomeSection, RenderItem},
 };
 
+/// The site-wide "recent" list shared by `home.recent` and the RSS feed: up
+/// to `recent_count` dated pages, ordered with `compare_summaries`.
+pub fn recent_pages(pages: &[Page], recent_count: usize) -> Vec<&Page> {
+    let mut recent: Vec<(PageSummary, &Page)> = pages
+        .iter()
+        .filter(|page| page.date.is_some())
+        .map(|page| (PageSummary::from(page), page))
+        .collect();
+    recent.sort_by(|a, b| compare_summaries(&a.0, &b.0));
+    recent.truncate(recent_count);
+    recent.into_iter().map(|(_, page)| page).collect()
+}
+
 /// The home page item (`dist/index.html`): up to `recent_count` dated pages
 /// from the whole site, newest first, and the top-level sections by slug.
 pub fn build(pages: &[Page], si: &SectionIndex, config: &SiteConfig) -> RenderItem {
-    let mut recent: Vec<PageSummary> = pages
-        .iter()
-        .filter(|page| page.date.is_some())
+    let recent = recent_pages(pages, config.recent_count)
+        .into_iter()
         .map(PageSummary::from)
         .collect();
-    recent.sort_by(compare_summaries);
-    recent.truncate(config.recent_count);
 
     let sections = si
         .sections
@@ -108,6 +118,31 @@ mod tests {
             ..SiteConfig::default()
         };
         assert!(recent_slugs(&home_for(&pages, &zero)).is_empty());
+    }
+
+    // AC-6.7 (batch 4)
+    #[test]
+    fn recent_pages_matches_home_recent() {
+        let pages = vec![
+            page_with("about", "About", Some("2026-01-01")),
+            page_with("posts/old", "Old", Some("2020-01-01")),
+            page_with("posts/undated", "Undated", None),
+            page_with("projects/new", "New", Some("2026-02-07")),
+            page_with("posts/b", "Same", Some("2026-01-01")),
+            page_with("posts/a", "Same", Some("2026-01-01")),
+        ];
+
+        for count in [0, 2, 10] {
+            let config = SiteConfig {
+                recent_count: count,
+                ..SiteConfig::default()
+            };
+            let shared: Vec<String> = recent_pages(&pages, count)
+                .iter()
+                .map(|p| p.slug.clone())
+                .collect();
+            assert_eq!(shared, recent_slugs(&home_for(&pages, &config)), "{count}");
+        }
     }
 
     // AC-2.4

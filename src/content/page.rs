@@ -27,6 +27,7 @@ pub struct Page {
 impl Page {
     pub fn new(fm: MangoFrontmatter, content: String, kind: PageType) -> Result<Self, MangoError> {
         let date = fm.date.as_deref().map(parse_date).transpose()?;
+        let tags = validate_tags(fm.tags.unwrap_or_default())?;
 
         Ok(Page {
             title: fm.title,
@@ -34,7 +35,7 @@ impl Page {
             description: fm.description,
             date,
             slug: String::new(),
-            tags: fm.tags.unwrap_or_default(),
+            tags,
             content,
             draft: fm.draft,
             kind,
@@ -62,6 +63,40 @@ pub fn slug_url(slug: &str) -> String {
     } else {
         format!("/{slug}/")
     }
+}
+
+/// Slug of a tag page: `tags/<name>`. The tag index itself is at `tags`.
+pub fn tag_slug(name: &str) -> String {
+    format!("tags/{name}")
+}
+
+/// Checks every tag against `^[a-z0-9]+(-[a-z0-9]+)*$` (tags are their own
+/// slugs) and removes duplicates, keeping the first occurrence's position.
+pub fn validate_tags(tags: Vec<String>) -> Result<Vec<String>, MangoError> {
+    let mut valid: Vec<String> = Vec::with_capacity(tags.len());
+
+    for tag in tags {
+        if !is_valid_tag(&tag) {
+            return Err(MangoError::Frontmatter(format!(
+                "invalid tag '{tag}': expected lowercase ASCII letters and digits separated by single hyphens"
+            )));
+        }
+        if !valid.contains(&tag) {
+            valid.push(tag);
+        }
+    }
+
+    Ok(valid)
+}
+
+fn is_valid_tag(tag: &str) -> bool {
+    !tag.is_empty()
+        && tag.split('-').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        })
 }
 
 /// Parses a strict `YYYY-MM-DD` date. chrono's `parse_from_str` accepts
@@ -207,6 +242,73 @@ mod tests {
         fm.date = Some("2026-02-30".into());
         let result = Page::new(fm, String::new(), PageType::General);
         assert!(matches!(result, Err(MangoError::Frontmatter(_))));
+    }
+
+    // AC-1.1 (batch 4)
+    #[test]
+    fn validate_tags_accepts_valid_values() {
+        let good = ["blog", "static-site", "a1", "2026", "a-b-c"];
+        let tags: Vec<String> = good.iter().map(|t| t.to_string()).collect();
+        assert_eq!(validate_tags(tags).unwrap(), good);
+    }
+
+    // AC-1.2 (batch 4)
+    #[test]
+    fn validate_tags_rejects_invalid_values_naming_value() {
+        let bad = [
+            "",
+            "Rust",
+            "static site",
+            "c++",
+            "-rust",
+            "rust-",
+            "a--b",
+            "café",
+            "ünï",
+        ];
+        for value in bad {
+            let err = validate_tags(vec!["ok".into(), value.into()]).expect_err(value);
+            assert!(
+                matches!(err, MangoError::Frontmatter(_)),
+                "{value}: {err:?}"
+            );
+            let msg = err.to_string();
+            assert!(msg.contains(&format!("'{value}'")), "{value}: {msg}");
+            assert!(
+                msg.contains(&format!(
+                    "invalid tag '{value}': expected lowercase ASCII letters and digits separated by single hyphens"
+                )),
+                "{value}: {msg}"
+            );
+        }
+    }
+
+    // AC-1.3 (batch 4)
+    #[test]
+    fn validate_tags_removes_duplicates_keeping_order() {
+        let tags = ["b", "a", "b", "c", "a"].map(String::from).to_vec();
+        assert_eq!(validate_tags(tags).unwrap(), ["b", "a", "c"]);
+    }
+
+    // AC-1.4 (batch 4)
+    #[test]
+    fn new_rejects_invalid_tag() {
+        let mut fm = frontmatter();
+        fm.tags = Some(vec!["blog".into(), "Rust".into()]);
+        let err = Page::new(fm, String::new(), PageType::General).expect_err("bad tag");
+        assert!(matches!(err, MangoError::Frontmatter(_)), "{err:?}");
+        assert!(err.to_string().contains("'Rust'"), "{err}");
+
+        let mut fm = frontmatter();
+        fm.tags = Some(vec!["b".into(), "a".into(), "b".into()]);
+        let page = Page::new(fm, String::new(), PageType::General).unwrap();
+        assert_eq!(page.tags, ["b", "a"]);
+    }
+
+    #[test]
+    fn tag_slug_is_under_tags() {
+        assert_eq!(tag_slug("blog"), "tags/blog");
+        assert_eq!(slug_url(&tag_slug("blog")), "/tags/blog/");
     }
 
     // AC-1.5

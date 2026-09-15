@@ -1,4 +1,7 @@
 {
     "title": "Mango Test Site",
-    "author": "Mango Tester"
+    "author": "Mango Tester",
+    "description": "Every mango feature, tested & escaped <ok>",
+    "base_url": "https://example.com/",
+    "recent_count": 5
 }

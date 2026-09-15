@@ -7,7 +7,7 @@ use tera::Tera;
 use crate::{
     config::SiteConfig,
     content::{
-        page::{Page, slug_url},
+        page::{Page, slug_url, tag_slug},
         summary::PageSummary,
     },
     error::MangoError,
@@ -21,9 +21,50 @@ pub struct PageTemplate {
     pub description: String,
     #[serde(serialize_with = "crate::content::page::serialize_date")]
     pub date: Option<NaiveDate>,
-    pub tags: Vec<String>,
+    pub tags: Vec<TagLink>,
     pub url: String,
     pub content: String,
+}
+
+/// A link to a tag page: `page.tags[]` entries.
+#[derive(Serialize, Debug)]
+pub struct TagLink {
+    pub name: String,
+    pub url: String,
+}
+
+impl TagLink {
+    pub fn new(name: String) -> Self {
+        TagLink {
+            url: slug_url(&tag_slug(&name)),
+            name,
+        }
+    }
+}
+
+/// A tag listed on the tag index: `tags[]` entries.
+#[derive(Serialize, Debug)]
+pub struct TagIndexEntry {
+    pub name: String,
+    pub url: String,
+    pub page_count: usize,
+}
+
+impl TagIndexEntry {
+    pub fn new(name: String, page_count: usize) -> Self {
+        TagIndexEntry {
+            url: slug_url(&tag_slug(&name)),
+            name,
+            page_count,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct TagTemplate {
+    name: String,
+    url: String,
+    pages: Vec<PageSummary>,
 }
 
 impl PageTemplate {
@@ -47,7 +88,7 @@ impl From<&Page> for PageTemplate {
             author: page.author.clone(),
             description: page.description.clone(),
             date: page.date,
-            tags: page.tags.clone(),
+            tags: page.tags.iter().cloned().map(TagLink::new).collect(),
             url: slug_url(&page.slug),
             content: String::new(),
         }
@@ -108,6 +149,9 @@ pub struct RenderItem {
     pub source: String,
     pub template: String,
     pub context: tera::Context,
+    /// The page date for content page items (`None` for undated pages and
+    /// every other item kind). The sitemap uses it for `<lastmod>`.
+    pub page_date: Option<NaiveDate>,
 }
 
 pub fn load_templates(templates: &Path) -> Result<Tera, MangoError> {
@@ -145,6 +189,7 @@ pub fn render_page(page: &Page, config: &SiteConfig) -> Result<RenderItem, Mango
         source: format!("page '{}'", page.slug),
         template: template.into(),
         context,
+        page_date: page.date,
     })
 }
 
@@ -170,6 +215,7 @@ pub fn render_section_page(
         slug: template.slug,
         template: "section.html".into(),
         context,
+        page_date: None,
     }
 }
 
@@ -188,6 +234,46 @@ pub fn render_home_page(
         source: "home page".into(),
         template: "home.html".into(),
         context,
+        page_date: None,
+    }
+}
+
+/// The tag index item (`dist/tags/index.html`). `entries` should already be
+/// sorted by name.
+pub fn render_tag_index(entries: Vec<TagIndexEntry>, config: &SiteConfig) -> RenderItem {
+    use tera::Context;
+    let mut context = Context::new();
+    context.insert("tags", &entries);
+    context.insert("config", config);
+
+    RenderItem {
+        slug: "tags".into(),
+        source: "tag index".into(),
+        template: "tags.html".into(),
+        context,
+        page_date: None,
+    }
+}
+
+/// One tag page item (`dist/tags/<name>/index.html`).
+pub fn render_tag_page(name: String, pages: Vec<PageSummary>, config: &SiteConfig) -> RenderItem {
+    use tera::Context;
+    let mut context = Context::new();
+    let slug = tag_slug(&name);
+    let template = TagTemplate {
+        url: slug_url(&slug),
+        name,
+        pages,
+    };
+    context.insert("tag", &template);
+    context.insert("config", config);
+
+    RenderItem {
+        source: format!("tag page '{}'", template.name),
+        slug,
+        template: "tag.html".into(),
+        context,
+        page_date: None,
     }
 }
 
@@ -301,6 +387,90 @@ mod tests {
         assert_eq!(home["sections"][0]["slug"], "posts");
         assert_eq!(home["sections"][0]["url"], "/posts/");
         assert_eq!(home["sections"][0]["page_count"], 3);
+        assert!(item.context.get("config").is_some());
+    }
+
+    // AC-3.1 (batch 4)
+    #[test]
+    fn page_context_tags_are_links() {
+        let fm = MangoFrontmatter {
+            title: "Title".into(),
+            author: "Author".into(),
+            description: "d".into(),
+            date: Some("2026-01-24".into()),
+            tags: Some(vec![
+                "static-site".into(),
+                "blog".into(),
+                "static-site".into(),
+            ]),
+            draft: false,
+        };
+        let mut page = Page::new(fm, String::new(), PageType::General).unwrap();
+        page.slug = "posts/one".into();
+
+        let item = render_page(&page, &SiteConfig::default()).unwrap();
+        let tags = &item.context.get("page").unwrap()["tags"];
+        assert_eq!(
+            *tags,
+            serde_json::json!([
+                { "name": "static-site", "url": "/tags/static-site/" },
+                { "name": "blog", "url": "/tags/blog/" },
+            ])
+        );
+        assert_eq!(item.page_date, page.date);
+    }
+
+    // AC-2.2 (batch 4)
+    #[test]
+    fn tag_index_context_and_source() {
+        let config = SiteConfig::default();
+        let item = render_tag_index(
+            vec![
+                TagIndexEntry::new("blog".into(), 2),
+                TagIndexEntry::new("rust".into(), 1),
+            ],
+            &config,
+        );
+        assert_eq!(item.slug, "tags");
+        assert_eq!(item.source, "tag index");
+        assert_eq!(item.template, "tags.html");
+        assert_eq!(item.page_date, None);
+        assert_eq!(
+            *item.context.get("tags").unwrap(),
+            serde_json::json!([
+                { "name": "blog", "url": "/tags/blog/", "page_count": 2 },
+                { "name": "rust", "url": "/tags/rust/", "page_count": 1 },
+            ])
+        );
+        assert_eq!(item.context.get("config").unwrap()["recent_count"], 10);
+    }
+
+    // AC-2.3, AC-3.2 (batch 4)
+    #[test]
+    fn tag_page_context_and_source() {
+        let page = page_with("posts/one", Some("2026-01-24"));
+        let item = render_tag_page(
+            "blog".into(),
+            vec![PageSummary::from(&page)],
+            &SiteConfig::default(),
+        );
+        assert_eq!(item.slug, "tags/blog");
+        assert_eq!(item.source, "tag page 'blog'");
+        assert_eq!(item.template, "tag.html");
+        assert_eq!(item.page_date, None);
+        let tag = item.context.get("tag").unwrap();
+        assert_eq!(tag["name"], "blog");
+        assert_eq!(tag["url"], "/tags/blog/");
+        assert_eq!(
+            tag["pages"],
+            serde_json::json!([{
+                "title": "Title",
+                "date": "2026-01-24",
+                "slug": "posts/one",
+                "url": "/posts/one/",
+            }])
+        );
+        assert!(tag["pages"][0].get("tags").is_none());
         assert!(item.context.get("config").is_some());
     }
 

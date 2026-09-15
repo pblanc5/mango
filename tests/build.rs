@@ -48,6 +48,13 @@ fn dated_page(title: &str, date: &str) -> String {
     )
 }
 
+/// A page with a raw JSON `tags` value, e.g. `r#"["blog"]"#`.
+fn tagged_page(title: &str, tags_json: &str, draft: bool) -> String {
+    format!(
+        "---\n{{\"title\": \"{title}\", \"author\": \"tester\", \"description\": \"desc\", \"tags\": {tags_json}, \"draft\": {draft}}}\n---\n# {title}\n"
+    )
+}
+
 fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
@@ -128,55 +135,387 @@ fn assert_failure(output: &Output, what: &str) {
     );
 }
 
-// AC-2.4, AC-2.8, AC-4.3, AC-5.2 (batch 1); AC-1.8, AC-2.6, AC-7.4 (batch 2)
+/// Builds the committed fixture site (`test/site`, `test/meta`,
+/// `test/mango.json`) once per test run and returns its output folder. The
+/// fixture is meant to exercise every feature on the success path; the
+/// `fixture_*` tests below read this output and must never modify it.
+fn fixture_dist() -> &'static Path {
+    static DIST: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIST.get_or_init(|| {
+        let root = root();
+        let out = root.join("target").join("integration-dist");
+        let _ = fs::remove_dir_all(&out);
+
+        let output = run_mango(
+            &[
+                "build",
+                "--site",
+                "test/site",
+                "--templates",
+                "test/meta/templates",
+                "--assets",
+                "test/meta/assets",
+                "-o",
+                out.to_str().unwrap(),
+                "--config",
+                "test/mango.json",
+            ],
+            &root,
+        );
+        assert_success(&output);
+        out
+    })
+}
+
+fn fixture_file(path: &str) -> String {
+    fs::read_to_string(fixture_dist().join(path))
+        .unwrap_or_else(|e| panic!("reading fixture output {path}: {e}"))
+}
+
+/// Asserts each needle occurs in `text`, each after the previous one.
+fn assert_in_order(text: &str, needles: &[&str]) {
+    let mut from = 0;
+    for needle in needles {
+        let at = text[from..]
+            .find(needle)
+            .unwrap_or_else(|| panic!("'{needle}' missing or out of order in:\n{text}"));
+        from += at + needle.len();
+    }
+}
+
+#[test]
+fn fixture_renders_markdown_extensions() {
+    let html = fixture_file("posts/extensions/index.html");
+    for needle in [
+        "<table>",
+        "<del>removed</del>",
+        r#"class="footnote-reference""#,
+        r#"<div class="footnote-definition" id="fn">"#,
+        r#"<h2 id="tables">"#,
+        r#"id="custom-id""#,
+        r#"class="fancy""#,
+        r#"<code class="language-rust">"#,
+        r#"<a href="https://example.org">"#,
+    ] {
+        assert!(html.contains(needle), "missing {needle}:\n{html}");
+    }
+    assert_eq!(html.matches(r#"type="checkbox""#).count(), 2, "{html}");
+    assert_eq!(html.matches("checked").count(), 1, "{html}");
+}
+
+#[test]
+fn fixture_escapes_special_characters() {
+    let escaped = "Tom &amp; Jerry &lt;3 &quot;Quotes&quot;";
+    let html = fixture_file("posts/escaping/index.html");
+    assert!(
+        between(&html, "<title>", "</title>").contains(escaped),
+        "{html}"
+    );
+    assert!(html.contains(&format!("<h1>{escaped}</h1>")), "{html}");
+    assert!(
+        html.contains(
+            r#"<meta name="description" content="Ampersands &amp; &lt;angle&gt; brackets">"#
+        ),
+        "{html}"
+    );
+    assert!(html.contains("5 &gt; 3 &amp;&amp; 2 &lt; 4"), "{html}");
+    assert!(!html.contains("<3"), "{html}");
+
+    let feed = fixture_file("feed.xml");
+    assert!(
+        feed.contains(&format!("<title>{escaped}</title>")),
+        "{feed}"
+    );
+    assert!(
+        feed.contains("<description>Ampersands &amp; &lt;angle&gt; brackets</description>"),
+        "{feed}"
+    );
+}
+
+#[test]
+fn fixture_excludes_drafts_everywhere() {
+    let out = fixture_dist();
+    assert!(!out.join("posts/draft").exists());
+    assert!(!out.join("tags/secret").exists());
+    for file in [
+        "index.html",
+        "posts/index.html",
+        "tags/index.html",
+        "tags/blog/index.html",
+        "feed.xml",
+        "sitemap.xml",
+    ] {
+        let text = fixture_file(file);
+        assert!(
+            !text.contains("Secret Draft") && !text.contains("secret"),
+            "{file} mentions the draft:\n{text}"
+        );
+    }
+}
+
+#[test]
+fn fixture_orders_listings_and_caps_recent() {
+    // Newest first, same date by title, undated last (by title).
+    let posts = fixture_file("posts/index.html");
+    assert_in_order(
+        &posts,
+        &[
+            "Markdown Extensions",
+            "Tom &amp; Jerry",
+            "Post One",
+            "Post Two",
+            "Test Page",
+            "Posts Index Page",
+            "Undated Notes",
+        ],
+    );
+    assert!(posts.contains(r#"href="/posts/index/""#), "{posts}");
+
+    // recent_count is 5: the five newest dated pages site-wide.
+    let home = fixture_file("index.html");
+    let recent = between(&home, r#"<ul class="recent-list">"#, "</ul>");
+    assert_in_order(
+        recent,
+        &[
+            "Markdown Extensions",
+            "Tom &amp; Jerry",
+            "Mango Task Tracker",
+            "Post One",
+            "Post Two",
+        ],
+    );
+    assert_eq!(recent.matches("<li>").count(), 5, "{recent}");
+    for absent in ["Test Page", "Undated Notes", "About", "Deep Dive"] {
+        assert!(!recent.contains(absent), "{absent} in recent:\n{recent}");
+    }
+
+    let blog = fixture_file("tags/blog/index.html");
+    assert_in_order(
+        &blog,
+        &[
+            "Markdown Extensions",
+            "Post One",
+            "Post Two",
+            "Undated Notes",
+        ],
+    );
+}
+
+#[test]
+fn fixture_nested_sections_and_top_level_page() {
+    let home = fixture_file("index.html");
+    let sections = between(&home, r#"<ul class="section-list">"#, "</ul>");
+    assert_in_order(
+        sections,
+        &[
+            r#"href="/docs/">docs</a> (0)"#,
+            r#"href="/posts/">posts</a> (7)"#,
+            r#"href="/projects/">projects</a> (1)"#,
+        ],
+    );
+    assert!(!sections.contains("about"), "{sections}");
+
+    let docs = fixture_file("docs/index.html");
+    assert!(docs.contains(r#"href="/docs/guides/""#), "{docs}");
+    assert!(!docs.contains(r#"class="section-list""#), "{docs}");
+
+    let guides = fixture_file("docs/guides/index.html");
+    assert!(guides.contains("<h1>guides</h1>"), "{guides}");
+    assert!(
+        guides.contains(r#"href="/docs/guides/advanced/""#),
+        "{guides}"
+    );
+    assert!(
+        guides.contains(r#"href="/docs/guides/getting-started/""#),
+        "{guides}"
+    );
+    assert!(!guides.contains("&#x2F;"), "{guides}");
+
+    let advanced = fixture_file("docs/guides/advanced/index.html");
+    assert!(
+        advanced.contains(r#"href="/docs/guides/advanced/deep-dive/""#),
+        "{advanced}"
+    );
+    assert!(!advanced.contains("subsection-list"), "{advanced}");
+
+    let about = fixture_file("about/index.html");
+    assert!(about.contains("<h1>About</h1>"), "{about}");
+    assert!(!about.contains("<time>"), "{about}");
+}
+
+#[test]
+fn fixture_tag_index_counts_and_dedup() {
+    let tags = fixture_file("tags/index.html");
+    let list = between(&tags, r#"<ul class="tag-list">"#, "</ul>");
+    assert_in_order(
+        list,
+        &[
+            ">blog</a> (4)",
+            ">docs</a> (2)",
+            ">escaping</a> (1)",
+            ">guide</a> (1)",
+            ">mango</a> (1)",
+            ">markdown</a> (2)",
+            ">progress</a> (1)",
+            ">static-site</a> (1)",
+            ">test</a> (1)",
+        ],
+    );
+    assert_eq!(list.matches("<li>").count(), 9, "{list}");
+
+    let page = fixture_file("posts/extensions/index.html");
+    let links = between(&page, r#"<ul class="tag-list">"#, "</ul>");
+    assert_eq!(
+        links.matches(r#"href="/tags/markdown/""#).count(),
+        1,
+        "duplicate tag must be dropped:\n{links}"
+    );
+    assert_in_order(
+        links,
+        &[r#"href="/tags/markdown/""#, r#"href="/tags/blog/""#],
+    );
+}
+
+#[test]
+fn fixture_feed_and_sitemap() {
+    let feed = fixture_file("feed.xml");
+    assert!(
+        feed.contains(
+            "<description>Every mango feature, tested &amp; escaped &lt;ok&gt;</description>"
+        ),
+        "{feed}"
+    );
+    // base_url has a trailing slash in test/mango.json.
+    assert!(feed.contains("<link>https://example.com/</link>"), "{feed}");
+    assert!(!feed.contains("example.com//"), "{feed}");
+    assert_eq!(feed.matches("<item>").count(), 5, "{feed}");
+    assert_in_order(
+        &feed,
+        &[
+            "Markdown Extensions",
+            "Tom &amp; Jerry",
+            "Mango Task Tracker",
+            "Post One",
+            "Post Two",
+        ],
+    );
+    assert!(
+        feed.contains("<pubDate>Sun, 01 Mar 2026 00:00:00 +0000</pubDate>"),
+        "{feed}"
+    );
+    assert!(
+        feed.contains("<pubDate>Fri, 20 Feb 2026 00:00:00 +0000</pubDate>"),
+        "{feed}"
+    );
+
+    let sitemap = fixture_file("sitemap.xml");
+    assert_eq!(sitemap.matches("<loc>").count(), 27, "{sitemap}");
+    assert_eq!(sitemap.matches("<lastmod>").count(), 8, "{sitemap}");
+    assert!(!sitemap.contains("example.com//"), "{sitemap}");
+    for path in [
+        "about/",
+        "posts/index/",
+        "docs/",
+        "docs/guides/advanced/",
+        "tags/",
+        "tags/escaping/",
+    ] {
+        assert!(
+            sitemap.contains(&format!("<loc>https://example.com/{path}</loc>")),
+            "{path} missing:\n{sitemap}"
+        );
+    }
+    assert!(
+        sitemap.contains("<loc>https://example.com/about/</loc>\n  </url>"),
+        "undated page must have no lastmod:\n{sitemap}"
+    );
+    assert!(
+        sitemap.contains(
+            "<loc>https://example.com/docs/guides/advanced/deep-dive/</loc>\n    <lastmod>2025-12-01</lastmod>"
+        ),
+        "{sitemap}"
+    );
+}
+
+#[test]
+fn fixture_copies_nested_assets_and_fills_page_context() {
+    let out = fixture_dist();
+    let source = root().join("test/meta/assets");
+    for asset in ["minimal/main.css", "images/logo.svg"] {
+        assert_eq!(
+            fs::read(out.join("assets").join(asset)).unwrap(),
+            fs::read(source.join(asset)).unwrap(),
+            "{asset}"
+        );
+    }
+
+    let page = fixture_file("posts/post_one/index.html");
+    assert!(
+        page.contains(r#"<link rel="canonical" href="/posts/post_one/">"#),
+        "{page}"
+    );
+    assert!(page.contains("by tester"), "{page}");
+
+    let home = fixture_file("index.html");
+    assert!(
+        home.contains(
+            r#"<meta name="description" content="Every mango feature, tested &amp; escaped &lt;ok&gt;">"#
+        ),
+        "{home}"
+    );
+    assert!(
+        home.contains(r#"<img src="/assets/images/logo.svg""#),
+        "{home}"
+    );
+}
+
+// AC-2.4, AC-2.8, AC-4.3, AC-5.2 (batch 1); AC-1.8, AC-2.6, AC-7.4 (batch 2);
+// AC-2.5, AC-8.1, AC-8.2, AC-8.3 (batch 4)
 #[test]
 fn build_generates_site_from_fixture() {
-    let root = root();
-    let out = root.join("target").join("integration-dist");
-    let _ = fs::remove_dir_all(&out);
+    let out = fixture_dist();
 
-    let output = run_mango(
-        &[
-            "build",
-            "--site",
-            "test/site",
-            "--templates",
-            "test/meta/templates",
-            "--assets",
-            "test/meta/assets",
-            "-o",
-            out.to_str().unwrap(),
-            "--config",
-            "test/mango.json",
-        ],
-        &root,
-    );
-
-    assert!(
-        output.status.success(),
-        "mango build exited with failure\nstderr: {}",
-        stderr(&output)
-    );
-
-    let expected = [
+    // The exact output manifest: catches missing files and stray ones
+    // (drafts, dropped tags, misplaced assets).
+    let mut expected = vec![
+        "about/index.html",
+        "assets/images/logo.svg",
+        "assets/minimal/main.css",
+        "docs/guides/advanced/deep-dive/index.html",
+        "docs/guides/advanced/index.html",
+        "docs/guides/getting-started/index.html",
+        "docs/guides/index.html",
+        "docs/index.html",
+        "feed.xml",
         "index.html",
+        "posts/escaping/index.html",
+        "posts/extensions/index.html",
+        "posts/index.html",
+        "posts/index/index.html",
         "posts/post_one/index.html",
         "posts/post_two/index.html",
         "posts/test/index.html",
-        "projects/mango/index.html",
-        "posts/index.html",
+        "posts/undated/index.html",
         "projects/index.html",
-        "assets/minimal/main.css",
+        "projects/mango/index.html",
+        "sitemap.xml",
+        "tags/blog/index.html",
+        "tags/docs/index.html",
+        "tags/escaping/index.html",
+        "tags/guide/index.html",
+        "tags/index.html",
+        "tags/mango/index.html",
+        "tags/markdown/index.html",
+        "tags/progress/index.html",
+        "tags/static-site/index.html",
+        "tags/test/index.html",
     ];
-
-    for path in expected {
-        assert!(
-            out.join(path).is_file(),
-            "expected {path} in output, got: {}\nstderr: {}",
-            list_files(&out).join(", "),
-            stderr(&output)
-        );
-    }
+    expected.sort();
+    let actual: Vec<String> = snapshot(out)
+        .into_iter()
+        .map(|f| f.replace('\\', "/"))
+        .collect();
+    assert_eq!(actual, expected);
 
     let page = fs::read_to_string(out.join("posts/post_one/index.html")).unwrap();
     assert!(
@@ -218,6 +557,12 @@ fn build_generates_site_from_fixture() {
         between(&page, "<title>", "</title>").contains("Mango Test Site"),
         "configured title missing from <title>:\n{page}"
     );
+    // Each page names itself in <title> and has exactly one <h1>.
+    assert!(
+        between(&page, "<title>", "</title>").contains("Post One |"),
+        "page title missing from <title>:\n{page}"
+    );
+    assert_eq!(page.matches("<h1").count(), 1, "{page}");
     assert!(
         between(&page, "<footer>", "</footer>").contains("Mango Tester"),
         "configured author missing from <footer>:\n{page}"
@@ -234,6 +579,220 @@ fn build_generates_site_from_fixture() {
     assert!(tracker < post_one, "newest page must come first:\n{home}");
     assert!(home.contains(r#"href="/posts/""#), "{home}");
     assert!(home.contains(r#"href="/projects/mango/""#), "{home}");
+
+    // AC-8.3 (batch 4): tag pages, tag links, feed and sitemap.
+    let blog = fs::read_to_string(out.join("tags/blog/index.html")).unwrap();
+    assert!(blog.contains(r#"href="/posts/post_one/""#), "{blog}");
+    assert!(blog.contains(r#"href="/posts/post_two/""#), "{blog}");
+    assert!(page.contains(r#"href="/tags/blog/""#), "{page}");
+
+    // AC-8.2 (batch 4)
+    assert!(
+        page.contains(r#"<link rel="alternate" type="application/rss+xml" href="/feed.xml">"#),
+        "{page}"
+    );
+    let tags = fs::read_to_string(out.join("tags/index.html")).unwrap();
+    assert!(tags.contains(r#"href="/tags/blog/""#), "{tags}");
+
+    let feed = fs::read_to_string(out.join("feed.xml")).unwrap();
+    assert!(
+        feed.contains("<link>https://example.com/projects/mango/</link>"),
+        "{feed}"
+    );
+    let tracker = feed.find("Mango Task Tracker").expect(&feed);
+    let post_one = feed.find("Post One").expect(&feed);
+    assert!(
+        tracker < post_one,
+        "newest feed item must come first:\n{feed}"
+    );
+
+    let sitemap = fs::read_to_string(out.join("sitemap.xml")).unwrap();
+    assert!(
+        sitemap.contains("<loc>https://example.com/</loc>"),
+        "{sitemap}"
+    );
+    assert!(
+        sitemap.contains("<loc>https://example.com/tags/blog/</loc>"),
+        "{sitemap}"
+    );
+}
+
+// AC-1.5 (batch 4)
+#[test]
+fn build_fails_on_invalid_tag_naming_file_and_value() {
+    let dir = temp_dir("build_fails_on_invalid_tag_naming_file_and_value");
+    let site = dir.join("site");
+    write_file(&site.join("posts/good.md"), &page("Good", false));
+    write_file(
+        &site.join("posts/bad_tag.md"),
+        &tagged_page("Bad", r#"["blog", "Rust"]"#, false),
+    );
+
+    let output = build_temp_site(&site, &dir.join("dist"));
+
+    assert_failure(&output, "invalid tag");
+    let err = stderr(&output);
+    assert!(err.contains("bad_tag.md"), "{err}");
+    assert!(err.contains("'Rust'"), "{err}");
+}
+
+// AC-1.6 (batch 4)
+#[test]
+fn build_fails_on_invalid_tag_in_draft() {
+    let dir = temp_dir("build_fails_on_invalid_tag_in_draft");
+    let site = dir.join("site");
+    write_file(&site.join("posts/good.md"), &page("Good", false));
+    write_file(
+        &site.join("posts/draft_tag.md"),
+        &tagged_page("Draft", r#"["Rust"]"#, true),
+    );
+
+    let output = build_temp_site(&site, &dir.join("dist"));
+
+    assert_failure(&output, "invalid tag in draft");
+    let err = stderr(&output);
+    assert!(err.contains("draft_tag.md"), "{err}");
+    assert!(err.contains("'Rust'"), "{err}");
+}
+
+// AC-2.6 (batch 4)
+#[test]
+fn build_fails_on_tags_folder_collision() {
+    let dir = temp_dir("build_fails_on_tags_folder_collision");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    write_file(&site.join("tags/one.md"), &page("One", false));
+    write_file(&out.join("marker.txt"), "keep me");
+
+    let output = build_temp_site(&site, &out);
+
+    assert_failure(&output, "tags folder collision");
+    let err = stderr(&output);
+    let collided = out.join("tags").join("index.html");
+    assert!(err.contains(collided.to_str().unwrap()), "{err}");
+    assert!(err.contains("section index 'tags'"), "{err}");
+    assert!(err.contains("tag index"), "{err}");
+    assert_eq!(snapshot(&out), vec!["marker.txt".to_string()]);
+}
+
+// AC-2.7 (batch 4)
+#[test]
+fn build_fails_on_top_level_tags_page_collision() {
+    let dir = temp_dir("build_fails_on_top_level_tags_page_collision");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    write_file(&site.join("tags.md"), &page("Tags Page", false));
+    write_file(&site.join("posts/one.md"), &page("One", false));
+    write_file(&out.join("marker.txt"), "keep me");
+
+    let output = build_temp_site(&site, &out);
+
+    assert_failure(&output, "tags page collision");
+    let err = stderr(&output);
+    let collided = out.join("tags").join("index.html");
+    assert!(err.contains(collided.to_str().unwrap()), "{err}");
+    assert!(err.contains("page 'tags'"), "{err}");
+    assert!(err.contains("tag index"), "{err}");
+    assert_eq!(snapshot(&out), vec!["marker.txt".to_string()]);
+}
+
+// AC-2.8 (batch 4)
+#[test]
+fn build_writes_tag_index_without_tags() {
+    let dir = temp_dir("build_writes_tag_index_without_tags");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    write_file(&site.join("posts/one.md"), &page("One", false));
+
+    let output = build_temp_site(&site, &out);
+
+    assert_success(&output);
+    assert!(
+        out.join("tags/index.html").is_file(),
+        "got: {}",
+        list_files(&out).join(", ")
+    );
+}
+
+// AC-2.9 (batch 4)
+#[test]
+fn missing_tags_template_keeps_previous_output() {
+    let (site, templates, assets, out) =
+        built_site_with_private_templates("missing_tags_template_keeps_previous_output");
+    assert!(out.join("tags/index.html").is_file());
+    let before = snapshot(&out);
+
+    fs::remove_file(templates.join("tags.html")).unwrap();
+    let output = build_with(&site, &templates, &assets, &out);
+
+    assert_failure(&output, "missing tags.html");
+    assert!(stderr(&output).contains("tags.html"), "{}", stderr(&output));
+    assert_previous_output_intact(&out);
+    assert_eq!(snapshot(&out), before);
+}
+
+// AC-4.3 (batch 4)
+#[test]
+fn build_fails_on_invalid_base_url_keeping_output() {
+    let dir = temp_dir("build_fails_on_invalid_base_url_keeping_output");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    let config = dir.join("mango.json");
+    write_file(&site.join("posts/one.md"), &page("One", false));
+    write_file(&config, r#"{"base_url": "https://example.com"}"#);
+
+    assert_success(&build_temp_site_with_config(&site, &out, &config));
+    let before = snapshot(&out);
+
+    write_file(&config, r#"{"base_url": "example.com"}"#);
+    let output = build_temp_site_with_config(&site, &out, &config);
+
+    assert_failure(&output, "invalid base_url");
+    let err = stderr(&output);
+    assert!(err.contains("Mango Config Error"), "{err}");
+    assert!(err.contains(config.to_str().unwrap()), "{err}");
+    assert!(err.contains("example.com"), "{err}");
+    assert_eq!(snapshot(&out), before, "output changed");
+}
+
+// AC-6.1, AC-7.1, AC-8.4, AC-8.5 (batch 4)
+#[test]
+fn feed_and_sitemap_only_with_base_url() {
+    let dir = temp_dir("feed_and_sitemap_only_with_base_url");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    let config = dir.join("mango.json");
+    write_file(&site.join("posts/one.md"), &dated_page("One", "2026-01-24"));
+
+    // No config at all.
+    assert_success(&build_temp_site(&site, &out));
+    assert!(out.join("posts/one/index.html").is_file());
+    assert!(!out.join("feed.xml").exists(), "feed without base_url");
+    assert!(
+        !out.join("sitemap.xml").exists(),
+        "sitemap without base_url"
+    );
+
+    // With base_url: both written.
+    write_file(&config, r#"{"base_url": "https://example.com/"}"#);
+    assert_success(&build_temp_site_with_config(&site, &out, &config));
+    let feed = fs::read_to_string(out.join("feed.xml")).unwrap();
+    assert!(
+        feed.contains("<link>https://example.com/posts/one/</link>"),
+        "{feed}"
+    );
+    let sitemap = fs::read_to_string(out.join("sitemap.xml")).unwrap();
+    assert!(
+        sitemap.contains("<loc>https://example.com/posts/one/</loc>"),
+        "{sitemap}"
+    );
+
+    // base_url removed: a rebuild deletes the old files.
+    write_file(&config, r#"{"title": "No Base"}"#);
+    assert_success(&build_temp_site_with_config(&site, &out, &config));
+    assert!(out.join("posts/one/index.html").is_file());
+    assert!(!out.join("feed.xml").exists(), "stale feed.xml kept");
+    assert!(!out.join("sitemap.xml").exists(), "stale sitemap.xml kept");
 }
 
 /// Text between the first `start` and the following `end` marker.

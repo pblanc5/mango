@@ -8,7 +8,7 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::{
     build::{
-        generate::{assets, content, home, section},
+        generate::{assets, content, feed, home, section, sitemap, tag},
         index, output,
     },
     config,
@@ -140,18 +140,32 @@ fn build(project_path: &Path, opts: BuildOpts) -> Result<(), MangoError> {
     // consumes it.
     let home_items = [home::build(&pages, &si, &config)];
     let section_items = section::build(si, &config);
+    let tag_items = tag::build(index::tag::build_tag_index(&pages), &config);
 
-    output::check_collisions(
-        dist,
+    // Non-template files. Both need `base_url` and are skipped without it;
+    // the sitemap lists every HTML render item.
+    let html_items = || {
         page_items
             .iter()
             .chain(section_items.iter())
-            .chain(home_items.iter()),
-    )?;
+            .chain(home_items.iter())
+            .chain(tag_items.iter())
+    };
+    let generated: Vec<output::GeneratedFile> = [
+        feed::build(&pages, &config),
+        sitemap::build(html_items(), &config),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    output::check_collisions(dist, html_items(), &generated)?;
 
     let rendered_pages = output::render(&tera, dist, &page_items)?;
     let rendered_sections = output::render(&tera, dist, &section_items)?;
     let rendered_home = output::render(&tera, dist, &home_items)?;
+    let rendered_tags = output::render(&tera, dist, &tag_items)?;
+    let rendered_generated = output::render_generated(dist, &generated);
 
     let cwd = current_dir()?;
     ensure_safe_to_clean(
@@ -164,6 +178,8 @@ fn build(project_path: &Path, opts: BuildOpts) -> Result<(), MangoError> {
     output::write(&rendered_pages)?;
     output::write(&rendered_sections)?;
     output::write(&rendered_home)?;
+    output::write(&rendered_tags)?;
+    output::write(&rendered_generated)?;
 
     assets::build(assets, &asset_dest)?;
 

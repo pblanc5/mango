@@ -9,7 +9,7 @@
 }
 ---
 
-# Static Site Generator – Task Breakdown
+## Static Site Generator – Task Breakdown
 
 > Goal: A Rust-based static site generator using Tide, pulldown-cmark, and Tera  
 > Non-goals (for now): plugins, hot reload, incremental builds, multiple content types
