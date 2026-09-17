@@ -17,10 +17,11 @@ Statuses: `open`, `in progress`, `done`, `dropped`. Sizes: **S** (one module, un
 | [ARCH-7](#arch-7) | Smaller cleanups: frontmatter return type, CLI path types | low | S | `/ship-feature` | — | open |
 | [OPS-1](#ops-1) | Continuous integration | medium | S | `/ship-feature` | a git remote | open |
 | [SPEC-1](#spec-1) | Confirm the constitution's open proposals | medium | S | manual | — | open |
-| [RISK-1](#risk-1) | Symlink loops in the site folder | medium | S | `/ship-feature` | — | open |
+| [RISK-1](#risk-1) | Symlink loops in the site folder | medium | S | `/ship-feature` | — | done |
 | [RISK-2](#risk-2) | Symlinked folders inside the assets folder | medium | S | `/ship-feature` | — | done |
 | [RISK-3](#risk-3) | Raw HTML in content is trusted but undocumented | low | S | `/ship-feature` | — | open |
 | [RISK-4](#risk-4) | Unknown frontmatter keys are silently ignored | medium | S | `/spec-feature` | — | open |
+| [RISK-5](#risk-5) | Unresolvable symlinks under `site/` are silently ignored | low | S | `/ship-feature` | — | open |
 | [TEST-1](#test-1) | No test for CRLF line endings | low | S | `/ship-feature` | — | open |
 | [DOC-1](#doc-1) | Stale line references in the system overview | low | S | `/ship-feature` | — | open |
 
@@ -151,9 +152,9 @@ Confirm or change each, then remove the markers.
 Source: `specs/_system/overview.md`, "Risky areas" (items marked **Inferred, confirm**), and the audit of 2026-09-14.
 
 ### RISK-1
-**Symlink loops in the site folder** · medium · S · `/ship-feature` · open
+**Symlink loops in the site folder** · medium · S · `/ship-feature` · done
 
-`loader::traverse` recurses with `path.is_dir()`, which follows symlinks, and has no cycle guard: a symlink pointing at an ancestor folder recurses until the stack overflows. Decide whether to skip symlinked folders or detect cycles (canonical-path set), and add a test.
+`loader::traverse` recursed with `path.is_dir()`, which follows symlinks, and had no cycle guard: a symlink pointing at an ancestor folder was followed and the whole site re-walked beneath it, silently publishing up to ~40 duplicated copies of every page under bogus nested URLs with exit status 0. (The reported symptom, a stack overflow, does not happen on Linux: the kernel's 40-symlink-per-resolution limit stops the recursion first and `is_dir()` swallows the resulting `ELOOP`, so the corrupt build succeeded without a word — worse than an abort, because nothing signalled it.) Resolved by rejecting symlinked folders rather than detecting cycles: `traverse` now classifies entries with `fs::metadata` plus a non-following `is_symlink` check and fails with `content folder '<rel>' is a symlink to a directory`, so no cycle guard is needed for symlinks (a cycle among real directories, such as a bind mount or a Windows junction, would still recurse unbounded; that is out of scope, not impossible); symlinked markdown files are still read. `content/loader.rs::tests::load_rejects_symlink_loop_to_ancestor` and `tests/build.rs::build_fails_on_symlinked_content_folder_keeping_output` prove the loop case fails cleanly and leaves the previous output intact. Unresolvable links stay silently ignored, unlike in `assets::plan`; that difference is deferred to [RISK-5](#risk-5).
 
 ### RISK-2
 **Symlinked folders inside the assets folder** · medium · S · `/ship-feature` · done
@@ -170,6 +171,11 @@ pulldown-cmark passes raw HTML through and templates print `page.content | safe`
 
 `MangoFrontmatter` lacks `deny_unknown_fields` (unlike `SiteConfig`), so a typo such as `"tag"` or `"dates"` is dropped without warning. Making it strict is a user-visible behavior change for existing sites, so specify it: which fields exist, the error message, and whether drafts are checked.
 
+### RISK-5
+**Unresolvable symlinks under `site/` are silently ignored** · low · S · `/ship-feature` · open
+
+An entry under `site/` whose target cannot be resolved — a dangling symlink, or a chain that loops (`a -> b -> a`) — is skipped without a word by `loader::traverse`, which is the behavior inherited from `path.is_dir()`/`path.is_file()` swallowing I/O errors. `assets::plan` already treats both as `io_at` build errors (RISK-2), so the two modules deliberately differ. Making the loader strict is a user-visible behavior change for existing sites and has no bearing on the runaway traversal, so it was deferred from RISK-1. Decide whether a broken or looping link under `site/` should fail the build (and whether a warning is enough), then align the two modules or record why they differ. `content/loader.rs::tests::load_ignores_dangling_symlink` and `load_ignores_symlink_loop_chain` pin the current behavior.
+
 ### TEST-1
 **No test for CRLF line endings** · low · S · `/ship-feature` · open
 
@@ -178,4 +184,4 @@ Frontmatter parsing handles `\r\n` (verified by hand during the audit) but no te
 ### DOC-1
 **Stale line references in the system overview** · low · S · `/ship-feature` · open
 
-`specs/_system/overview.md` cites line numbers (e.g. in `src/cli.rs` and `example/meta/templates/page.html`) that moved in later commits. Refresh them, or cite functions instead of lines so they stay valid; ARCH-1 to ARCH-5 will move most of them again, so this is best done after those land.
+`specs/_system/overview.md` cites line numbers (e.g. in `src/cli.rs` and `example/meta/templates/page.html`) that moved in later commits. Refresh them, or cite functions instead of lines so they stay valid; ARCH-1 to ARCH-5 will move most of them again, so this is best done after those land. The "Risky areas" rows for `loader::traverse` and `assets::collect` are also stale now that RISK-1 and RISK-2 are done; refresh them in the same pass.

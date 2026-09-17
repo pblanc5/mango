@@ -27,12 +27,35 @@ fn traverse(site: &Path, dir: &Path, pages: &mut Vec<Page>) -> Result<(), MangoE
         let entry = result.map_err(|e| MangoError::io_at(dir, e))?;
         let path = &entry.path();
 
-        if path.is_dir() {
+        // `metadata` follows the link, `is_symlink` below does not, so a
+        // symlink to a folder is rejected here instead of being descended
+        // into — which used to re-walk the whole site under the link,
+        // silently publishing duplicate pages when it pointed at an
+        // ancestor. On `Err` (a dangling link, an `ELOOP` chain, an entry
+        // that vanished after `read_dir`) the entry is skipped: this is where
+        // `is_dir()`/`is_file()` used to swallow the error, and turning it
+        // into a build error is a deliberate strictness change, tracked as
+        // RISK-5 in specs/_system/backlog.md. Skipping stops the recursion
+        // just as well as failing would.
+        let Ok(target) = fs::metadata(path) else {
+            continue;
+        };
+
+        if target.is_dir() {
+            if path.is_symlink() {
+                let msg = format!(
+                    "content folder '{}' is a symlink to a directory ('{}'): symlinked folders are not followed; replace it with a real folder",
+                    site_relative(site, path),
+                    path.display()
+                );
+                return Err(MangoError::General(msg));
+            }
+
             traverse(site, path, pages)?;
             continue;
         }
 
-        if !path.is_file() || !is_markdown(path) {
+        if !target.is_file() || !is_markdown(path) {
             continue;
         }
 
@@ -64,6 +87,15 @@ fn traverse(site: &Path, dir: &Path, pages: &mut Vec<Page>) -> Result<(), MangoE
     }
 
     Ok(())
+}
+
+/// Labels a path for error messages: relative to the site folder, with `/`
+/// separators, falling back to the full path if it is not under `site`.
+fn site_relative(site: &Path, path: &Path) -> String {
+    path.strip_prefix(site)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 /// `.md` and `.markdown` files, in any letter case, are pages.
@@ -303,5 +335,147 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("draft.md"), "{msg}");
         assert!(msg.contains("invalid file name 'my posts'"), "{msg}");
+    }
+
+    // AC-11.1, AC-11.3
+    #[cfg(unix)]
+    #[test]
+    fn load_rejects_symlinked_directory() {
+        use std::os::unix::fs::symlink;
+
+        for (test_name, link_rel) in [
+            ("load_rejects_symlinked_directory_root", "vendor"),
+            ("load_rejects_symlinked_directory_nested", "posts/vendor"),
+        ] {
+            let site = fixture_dir(test_name);
+            write_file(&site.join("posts/real.md"), &page("Real", false));
+            write_file(&site.join("shared/linked.md"), &page("Linked", false));
+            let link = site.join(link_rel);
+            fs::create_dir_all(link.parent().unwrap()).unwrap();
+            symlink(site.join("shared"), &link).unwrap();
+
+            let err = load(&site).expect_err("a symlinked content folder must fail the load");
+            assert!(matches!(err, MangoError::General(_)), "{err:?}");
+            let msg = err.to_string();
+            assert!(
+                msg.contains(&format!("content folder '{link_rel}'")),
+                "{msg}"
+            );
+            assert!(msg.contains("symlink to a directory"), "{msg}");
+            // The link's own path as walked, not its target.
+            assert!(msg.contains(&link.display().to_string()), "{msg}");
+            assert!(msg.ends_with("replace it with a real folder"), "{msg}");
+        }
+    }
+
+    // AC-11.2
+    #[cfg(unix)]
+    #[test]
+    fn load_rejects_symlink_loop_to_ancestor() {
+        use std::os::unix::fs::symlink;
+
+        let site = fixture_dir("load_rejects_symlink_loop_to_ancestor");
+        write_file(&site.join("posts/real.md"), &page("Real", false));
+        // Pointing at the site folder itself: this used to be followed,
+        // yielding ~40 duplicate copies of the site with no error at all.
+        // The call must return an error instead.
+        symlink(&site, site.join("loop")).unwrap();
+
+        let err = load(&site).expect_err("a symlink to an ancestor must fail the load");
+        assert!(matches!(err, MangoError::General(_)), "{err:?}");
+        let msg = err.to_string();
+        assert!(msg.contains("content folder 'loop'"), "{msg}");
+        assert!(msg.contains("symlink to a directory"), "{msg}");
+    }
+
+    // AC-11.4
+    #[cfg(unix)]
+    #[test]
+    fn load_follows_symlinked_markdown_file() {
+        use std::os::unix::fs::symlink;
+
+        let dir = fixture_dir("load_follows_symlinked_markdown_file");
+        let site = dir.join("site");
+        write_file(&site.join("posts/real.md"), &page("Real", false));
+        write_file(&dir.join("shared/post.md"), &page("Shared", false));
+        symlink(dir.join("shared/post.md"), site.join("posts/linked.md")).unwrap();
+
+        let mut slugs: Vec<_> = load(&site).unwrap().into_iter().map(|p| p.slug).collect();
+        slugs.sort();
+        // The slug comes from the link path, not from the link target.
+        assert_eq!(slugs, ["posts/linked", "posts/real"]);
+    }
+
+    // AC-11.5
+    #[cfg(unix)]
+    #[test]
+    fn load_ignores_symlinked_non_markdown_file() {
+        use std::os::unix::fs::symlink;
+
+        let dir = fixture_dir("load_ignores_symlinked_non_markdown_file");
+        let site = dir.join("site");
+        write_file(&site.join("posts/real.md"), &page("Real", false));
+        write_file(&dir.join("shared/notes.txt"), "not a page");
+        symlink(dir.join("shared/notes.txt"), site.join("posts/notes.txt")).unwrap();
+
+        let slugs: Vec<_> = load(&site).unwrap().into_iter().map(|p| p.slug).collect();
+        assert_eq!(slugs, ["posts/real"]);
+    }
+
+    // AC-11.8
+    #[cfg(unix)]
+    #[test]
+    fn load_accepts_symlinked_site_root() {
+        use std::os::unix::fs::symlink;
+
+        let dir = fixture_dir("load_accepts_symlinked_site_root");
+        let real = dir.join("shared-content");
+        write_file(&real.join("posts/one.md"), &page("One", false));
+        let link = dir.join("site");
+        symlink(&real, &link).unwrap();
+
+        let slugs: Vec<_> = load(&link).unwrap().into_iter().map(|p| p.slug).collect();
+        assert_eq!(slugs, ["posts/one"]);
+    }
+
+    // AC-11.6 [baseline] An unresolvable symlink is ignored, not an error.
+    #[cfg(unix)]
+    #[test]
+    fn load_ignores_dangling_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let site = fixture_dir("load_ignores_dangling_symlink");
+        write_file(&site.join("posts/real.md"), &page("Real", false));
+        let missing = site.join("posts/nowhere");
+        symlink(&missing, site.join("posts/broken.md")).unwrap();
+        symlink(&missing, site.join("posts/broken.txt")).unwrap();
+
+        let mut slugs: Vec<_> = load(&site)
+            .expect("a dangling symlink must not fail the load")
+            .into_iter()
+            .map(|p| p.slug)
+            .collect();
+        slugs.sort();
+        assert_eq!(slugs, ["posts/real"]);
+    }
+
+    // AC-11.7 [baseline] A looping link chain is ignored, not an error.
+    #[cfg(unix)]
+    #[test]
+    fn load_ignores_symlink_loop_chain() {
+        use std::os::unix::fs::symlink;
+
+        let site = fixture_dir("load_ignores_symlink_loop_chain");
+        write_file(&site.join("real.md"), &page("Real", false));
+        symlink("b.md", site.join("a.md")).unwrap();
+        symlink("a.md", site.join("b.md")).unwrap();
+
+        let mut slugs: Vec<_> = load(&site)
+            .expect("a symlink loop chain must not fail the load")
+            .into_iter()
+            .map(|p| p.slug)
+            .collect();
+        slugs.sort();
+        assert_eq!(slugs, ["real"]);
     }
 }

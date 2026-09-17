@@ -1945,6 +1945,61 @@ fn build_accepts_symlinked_assets_root() {
     );
 }
 
+// AC-11.9
+#[cfg(unix)]
+#[test]
+fn build_fails_on_symlinked_content_folder_keeping_output() {
+    use std::os::unix::fs::symlink;
+
+    let dir = temp_dir("build_fails_on_symlinked_content_folder_keeping_output");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    write_file(&site.join("posts/one.md"), &page("One", false));
+
+    assert_success(&build_temp_site(&site, &out));
+    write_file(&out.join("marker.txt"), "keep me");
+    let before = snapshot(&out);
+
+    // A symlink pointing at the site folder itself: the loader used to follow
+    // it, publishing ~40 duplicate copies of the site with exit status 0.
+    symlink(&site, site.join("loop")).unwrap();
+    let output = build_temp_site(&site, &out);
+
+    assert_failure(&output, "symlinked content folder");
+    let err = stderr(&output);
+    assert!(err.contains("content folder 'loop'"), "{err}");
+    assert!(err.contains("symlink to a directory"), "{err}");
+    assert_eq!(
+        snapshot(&out),
+        before,
+        "a symlinked content folder must not touch the output"
+    );
+}
+
+// AC-11.10
+#[cfg(unix)]
+#[test]
+fn build_reads_symlinked_markdown_file() {
+    use std::os::unix::fs::symlink;
+
+    let dir = temp_dir("build_reads_symlinked_markdown_file");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    write_file(&site.join("posts/one.md"), &page("One", false));
+    write_file(&dir.join("shared/post.md"), &page("Shared", false));
+    symlink(dir.join("shared/post.md"), site.join("posts/linked.md")).unwrap();
+
+    assert_success(&build_temp_site(&site, &out));
+
+    // The slug follows the link's path under the site folder.
+    let rendered = out.join("posts/linked/index.html");
+    assert!(rendered.is_file(), "{:?}", snapshot(&out));
+    assert!(
+        fs::read_to_string(rendered).unwrap().contains("Shared"),
+        "the link target's content must be rendered"
+    );
+}
+
 #[test]
 fn build_accepts_any_case_md_and_markdown_extensions() {
     let dir = temp_dir("build_accepts_any_case_md_and_markdown_extensions");
