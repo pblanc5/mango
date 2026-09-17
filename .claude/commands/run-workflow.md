@@ -22,7 +22,7 @@ Arguments: `$ARGUMENTS`
   - publishing that gate's approved documents to their `publish_to` paths
   - the stages and loops up to the next gate, within the caps in the workflow file
 - **When to stop:** a scope change, a `blocked` verdict, a verdict with no handler, an exhausted cap, or a publish conflict stops the run. Continuing needs the user again. After a scope change, continuing means re-planning and re-approving.
-- **Git:** never commit, push, stage, stash, reset or check out.
+- **Git:** you may create the run's own branch and commit to it (step 3.4, step 4.6a), and nothing else. Never `push`. Never `reset`, `stash`, `clean`, `rebase`, `commit --amend`, `checkout -- <path>`, or any forced operation: those destroy uncommitted work, and a run's output sits uncommitted in the working tree until its first checkpoint. Never commit onto a branch this run did not create. Personas may never use git except to read (`status`, `diff`, `log`, `show`).
 
 ## 1. Parse arguments
 - **`--list`:** find workflows (see step 2). Validate each one and print:
@@ -67,9 +67,15 @@ Check all of the following. Collect **every** problem and stop if there are any.
    - `dirty`: the lines of `git status --porcelain`, excluding `.dev-pipeline/`
 
    Otherwise the baseline is `"not a git repo"`.
-4. **Context files.** For each path in `context`, check whether it exists. Existing paths become `context_files`. Missing paths go in `missing_context`, and you warn the user. The run continues.
-5. **Input file.** Write `<run_dir>/00-input.md` with the input verbatim.
-6. **State file.** Write `<run_dir>/state.json`:
+4. **Run branch.** Only if `git_baseline` is not `"not a git repo"`:
+   - If `dirty` (from step 3.3) is empty, create and check out `pipeline/<slug>` from the current HEAD, where `<slug>` is the run id's slug. Record `"branch": "pipeline/<slug>"` in state.
+   - If `dirty` is **not** empty, do not create a branch and do not commit anything. Report the dirty paths and ask the user to choose: **(a)** stop, so they can commit or stash first; **(b)** proceed with no branch and no checkpoints, exactly as runs behaved before this rule. Record `"branch": null` and, for (b), `"branch_skipped": "dirty tree"`. End your turn and wait.
+   - If HEAD is already on a branch this session created for this item, use it and record it rather than nesting another.
+
+   A run branch is created before any persona runs, so every file a run touches is on it.
+5. **Context files.** For each path in `context`, check whether it exists. Existing paths become `context_files`. Missing paths go in `missing_context`, and you warn the user. The run continues.
+6. **Input file.** Write `<run_dir>/00-input.md` with the input verbatim.
+7. **State file.** Write `<run_dir>/state.json`:
 
 ~~~json
 {
@@ -86,9 +92,11 @@ Check all of the following. Collect **every** problem and stop if there are any.
   "total_attempts": 0,
   "max_total_attempts": 24,
   "git_baseline": { "head": "…", "dirty": [] },
+  "branch": "pipeline/risk-1-symlink-loops",
+  "checkpoints": [],
   "context_files": ["specs/constitution.md"],
   "missing_context": [],
-  "stages": { "spec": { "attempts": 0, "latest": null, "verdict": null, "spec_id": null } },
+  "stages": { "spec": { "attempts": 0, "latest": null, "verdict": null, "spec_id": null, "checkpoint": null } },
   "publish_checks": {},
   "published": [],
   "loops": {},
@@ -97,8 +105,9 @@ Check all of the following. Collect **every** problem and stop if there are any.
 }
 ~~~
 
-7. **Tell the user** in a few lines:
+8. **Tell the user** in a few lines:
    - the run id
+   - the run branch, or why there is none
    - the stage chain with gates, loops, caps and publish targets
    - any missing context files
    - that the stages up to the first gate produce a plan for approval
@@ -163,6 +172,13 @@ Do your job as described in your instructions. Return your artifact document as 
      - Resolve the target by replacing `{spec_id}` with this artifact's `spec_id` and `{run_id}` with the run id.
      - Record `publish_checks[S] = {target, hash}`. `hash` is a content hash of the target file as it is **now**, or `"absent"` if it doesn't exist. Use one method consistently for the whole run, e.g. `git hash-object --no-filters <file>`, or `Get-FileHash`/`sha256sum` outside git.
    - Save `state.json` **before** doing anything else.
+6a. **Checkpoint.** If `branch` is set and this stage's persona changed project files (compare `git status --porcelain`, ignoring `.dev-pipeline/`, against the previous checkpoint):
+   - `git add -A` (`.dev-pipeline/` is gitignored; if it ever is not, exclude it explicitly), then commit with subject `pipeline(<run_id>): <S> v<attempt>` and the artifact's `summary` as the body.
+   - Append `{stage, attempt, sha, at}` to `checkpoints` and set `stages[S].checkpoint`, then save `state.json`.
+   - Never amend or reorder a checkpoint. A rejected stage keeps its checkpoint; the next attempt commits on top. The branch is a record of what happened, not a tidy history — step 7's squash is what tidies it.
+   - If nothing changed, skip silently.
+
+   Checkpoints happen **after** the artifact has been validated (step 4.5), so work from a `bad_artifact` stop is never committed.
 7. **Report one line** to the user: `[S v<attempt>] <persona> → <verdict> — <summary>`.
 8. **Decide what's next.** Check these in order:
    1. `scope_change: true`: stop with reason `scope_change`.
@@ -211,6 +227,8 @@ For each stage since the previous gate that has `publish_to`, in workflow order:
 ## 6. Resume: `--resume <run-id> [--from <stage-id>] [notes]`
 Load `.dev-pipeline/runs/<run-id>/state.json` and the workflow file it names. Re-validate the workflow (step 2).
 
+If `state.branch` is set and it is not the current branch, check it out before continuing, and stop if it no longer exists.
+
 **With `--from <stage-id>`:**
 - Allowed only if the run isn't `done`, and the stage is `current_stage` or earlier.
 - Set `current_stage` to that stage, and `pending.user_notes` to the notes (or `none`).
@@ -240,8 +258,12 @@ Load `.dev-pipeline/runs/<run-id>/state.json` and the workflow file it names. Re
    - a table: stage | attempts | final verdict | latest artifact
    - which loops fired and how often, and the approvals given
    - **published documents** (from `published`)
-   - **files changed:** in a git repo, `git status --porcelain` minus the baseline `dirty` entries and `.dev-pipeline/`; otherwise the Developer's listed files
-   - a closing line: **Nothing was committed.** Review with `git diff`, then commit code and specs together when you're happy.
+   - **files changed:** in a git repo, `git diff --stat <branch point>..HEAD` plus any still-uncommitted paths; otherwise the Developer's listed files
+   - **branch and checkpoints:** the branch name and one line per checkpoint (`<stage> v<attempt>  <sha>  <summary>`)
+   - a closing line, when a branch was created: **Nothing is on `master`.** The work is on `<branch>` as `<n>` checkpoint commits. Review with `git diff master..<branch>`, then say the word and I will squash-merge it to `master` with a message you approve and delete the branch. To discard it instead: `git checkout master && git branch -D <branch>`.
+   - when no branch was created, the old closing line applies instead: **Nothing was committed.** Review with `git diff`, then commit code and specs together when you're happy.
+
+   **Never squash-merge on your own initiative.** The user asks, every time.
 
 ## 8. Stop
 1. Set `status` to `stopped`, set `stop_reason` and `stop_detail`, and save state.
@@ -249,11 +271,13 @@ Load `.dev-pipeline/runs/<run-id>/state.json` and the workflow file it names. Re
    - the stage, attempt, and reason
    - the artifact's "Questions / blockers" section, or its "Feedback for next stage" for caps and unhandled verdicts
    - how to continue: `/run-workflow --resume <run_id> [--from <stage>] <your answers or instructions>`
+   - when a branch exists: its name, the checkpoints so far, and that the work is preserved on it — discard with `git checkout master && git branch -D <branch>`, or continue with `--resume`
 3. For `scope_change`, say explicitly that resuming returns to planning and needs re-approval. Mention `--from <stage>` for going back further, e.g. to requirements.
 
 ## Rules
 - **You write only two kinds of file:** files in `run_dir`, and approved documents to validated `publish_to` targets through step 5.1. Personas return content and you save it.
-- Never edit any other project file, run tests, write specs, or review code yourself. Never commit, push, stage, stash, reset, or check out.
+- Never edit any other project file, run tests, write specs, or review code yourself.
+- Git: only the run branch and its checkpoints (step 0). Never push. Never squash-merge unless the user asks.
 - Never skip, reorder, or add stages, and never invent or change a verdict.
 - Save `state.json` after every state change so any run can be resumed.
 - Keep chat updates short. The detail lives in the artifacts.
