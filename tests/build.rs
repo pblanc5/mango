@@ -1849,6 +1849,102 @@ fn build_fails_on_missing_assets_folder_keeping_output() {
     assert_eq!(snapshot(&out), before, "missing assets changed output");
 }
 
+// AC-10.4
+#[cfg(unix)]
+#[test]
+fn build_fails_on_symlinked_asset_folder_keeping_output() {
+    use std::os::unix::fs::symlink;
+
+    let root = root();
+    let dir = temp_dir("build_fails_on_symlinked_asset_folder_keeping_output");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    let assets = dir.join("assets");
+    write_file(&site.join("posts/one.md"), &page("One", false));
+    copy_dir(&root.join("example/meta/assets"), &assets);
+    let templates = root.join("example/meta/templates");
+
+    assert_success(&build_with(&site, &templates, &assets, &out));
+    write_file(&out.join("marker.txt"), "keep me");
+    let before = snapshot(&out);
+
+    // A symlink to a folder: planned as a file today, so `fs::copy` used to
+    // fail after the output folder had already been emptied.
+    write_file(&dir.join("shared/reset.css"), "* { margin: 0 }");
+    symlink(dir.join("shared"), assets.join("vendor")).unwrap();
+    let output = build_with(&site, &templates, &assets, &out);
+
+    assert_failure(&output, "symlinked asset folder");
+    let err = stderr(&output);
+    assert!(err.contains("asset 'vendor'"), "{err}");
+    assert!(err.contains("symlink to a directory"), "{err}");
+    assert_eq!(
+        snapshot(&out),
+        before,
+        "a symlinked asset folder must not touch the output"
+    );
+}
+
+// AC-10.8
+#[cfg(unix)]
+#[test]
+fn build_copies_symlinked_asset_file() {
+    use std::os::unix::fs::symlink;
+
+    let root = root();
+    let dir = temp_dir("build_copies_symlinked_asset_file");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    let assets = dir.join("assets");
+    write_file(&site.join("posts/one.md"), &page("One", false));
+    copy_dir(&root.join("example/meta/assets"), &assets);
+    write_file(&dir.join("shared/reset.css"), "* { margin: 0 }");
+    symlink(dir.join("shared/reset.css"), assets.join("reset.css")).unwrap();
+
+    assert_success(&build_with(
+        &site,
+        &root.join("example/meta/templates"),
+        &assets,
+        &out,
+    ));
+
+    let copied = out.join("assets/reset.css");
+    assert!(!copied.is_symlink(), "the link target must be copied");
+    assert_eq!(fs::read_to_string(copied).unwrap(), "* { margin: 0 }");
+}
+
+// AC-10.9
+#[cfg(unix)]
+#[test]
+fn build_accepts_symlinked_assets_root() {
+    use std::os::unix::fs::symlink;
+
+    let root = root();
+    let dir = temp_dir("build_accepts_symlinked_assets_root");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    let assets = dir.join("shared-theme/assets");
+    write_file(&site.join("posts/one.md"), &page("One", false));
+    copy_dir(&root.join("example/meta/assets"), &assets);
+    // The assets folder passed to --assets is itself a symlink to a folder.
+    let link = dir.join("meta/assets");
+    fs::create_dir_all(link.parent().unwrap()).unwrap();
+    symlink(&assets, &link).unwrap();
+
+    assert_success(&build_with(
+        &site,
+        &root.join("example/meta/templates"),
+        &link,
+        &out,
+    ));
+
+    assert!(
+        out.join("assets/css/main.css").is_file(),
+        "{:?}",
+        snapshot(&out)
+    );
+}
+
 #[test]
 fn build_accepts_any_case_md_and_markdown_extensions() {
     let dir = temp_dir("build_accepts_any_case_md_and_markdown_extensions");

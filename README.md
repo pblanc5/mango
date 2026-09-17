@@ -103,6 +103,7 @@ A build that fails on bad content, config, templates, assets or conflicting outp
 - No dev server (`run`) or `publish` yet.
 - No pagination, section intro pages, syntax highlighting or automatic heading IDs.
 - `clean` has no `--config` option, so it does not protect a config file stored inside the output folder.
+- A symlink inside `meta/assets/` may point at a file (its contents are copied), but a symlink to a folder is a build error: use a real folder. A broken link or a link loop is an error too. The `--assets` folder itself may be a symlink.
 
 ## Development
 

@@ -45,21 +45,38 @@ fn collect(
         let file_type = child
             .file_type()
             .map_err(|e| MangoError::io_at(&source, e))?;
-        if file_type.is_dir() {
+        let rel = source
+            .strip_prefix(root)
+            .map_err(|_| {
+                MangoError::General(format!(
+                    "asset '{}' is outside the assets folder '{}'",
+                    source.display(),
+                    root.display()
+                ))
+            })?
+            .to_path_buf();
+        let rel_label = rel.to_string_lossy().replace('\\', "/");
+
+        // `file_type()` above does not follow symlinks; `metadata` does, so a
+        // link to a folder is recognised here instead of blowing up in `copy`
+        // after the output folder was cleaned. A dangling link or a symlink
+        // loop fails here too, for the same reason.
+        let target = fs::metadata(&source).map_err(|e| MangoError::io_at(&source, e))?;
+        if target.is_dir() {
+            if file_type.is_symlink() {
+                return Err(MangoError::General(format!(
+                    "asset '{}' is a symlink to a directory ('{}'): symlinked folders are not copied; replace it with a real folder",
+                    rel_label,
+                    source.display()
+                )));
+            }
             collect(root, &source, asset_dest, files)?;
             continue;
         }
 
-        let rel = source.strip_prefix(root).map_err(|_| {
-            MangoError::General(format!(
-                "asset '{}' is outside the assets folder '{}'",
-                source.display(),
-                root.display()
-            ))
-        })?;
         files.push(AssetFile {
-            dest: asset_dest.join(rel),
-            label: format!("asset '{}'", rel.to_string_lossy().replace('\\', "/")),
+            dest: asset_dest.join(&rel),
+            label: format!("asset '{rel_label}'"),
             source,
         });
     }
@@ -152,6 +169,90 @@ mod tests {
         assert_eq!(labels, ["asset 'a/b.css'", "asset 'z.txt'"]);
         assert_eq!(files[0].dest, dest.join("a/b.css"));
         assert!(!dest.exists(), "plan must not create the destination");
+    }
+
+    // AC-10.1, AC-10.2, AC-10.3
+    #[cfg(unix)]
+    #[test]
+    fn plan_rejects_symlinked_directory() {
+        use std::os::unix::fs::symlink;
+
+        for (link, expected) in [("vendor", "vendor"), ("css/vendor", "css/vendor")] {
+            let dir = fixture_dir("plan_rejects_symlinked_directory");
+            let src = dir.join("src");
+            let dest = dir.join("dest");
+            write_file(&src.join("css/main.css"), "body {}");
+            write_file(&dir.join("theme/reset.css"), "* {}");
+            fs::create_dir_all(src.join(link).parent().unwrap()).unwrap();
+            symlink(dir.join("theme"), src.join(link)).unwrap();
+
+            let err = plan(&src, &dest).expect_err("symlinked folder must be rejected");
+
+            assert!(matches!(err, MangoError::General(_)), "{err:?}");
+            let msg = err.to_string();
+            assert!(msg.contains(&format!("asset '{expected}'")), "{msg}");
+            assert!(msg.contains("symlink to a directory"), "{msg}");
+            assert!(!dest.exists(), "plan must not create the destination");
+        }
+    }
+
+    // AC-10.5
+    #[cfg(unix)]
+    #[test]
+    fn plan_fails_on_dangling_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let dir = fixture_dir("plan_fails_on_dangling_symlink");
+        let src = dir.join("src");
+        fs::create_dir_all(&src).unwrap();
+        symlink(dir.join("nowhere"), src.join("broken.css")).unwrap();
+
+        let err = plan(&src, &dir.join("dest")).expect_err("dangling symlink must fail");
+        assert!(matches!(err, MangoError::IoPath { .. }), "{err:?}");
+        assert!(err.to_string().contains("broken.css"), "{err}");
+    }
+
+    // AC-10.6
+    #[cfg(unix)]
+    #[test]
+    fn plan_fails_on_symlink_loop() {
+        use std::os::unix::fs::symlink;
+
+        let dir = fixture_dir("plan_fails_on_symlink_loop");
+        let src = dir.join("src");
+        fs::create_dir_all(&src).unwrap();
+        symlink(src.join("b"), src.join("a")).unwrap();
+        symlink(src.join("a"), src.join("b")).unwrap();
+
+        let err = plan(&src, &dir.join("dest")).expect_err("symlink loop must fail");
+        assert!(matches!(err, MangoError::IoPath { .. }), "{err:?}");
+        let msg = err.to_string();
+        let a = src.join("a").display().to_string();
+        let b = src.join("b").display().to_string();
+        assert!(msg.contains(&a) || msg.contains(&b), "{msg}");
+    }
+
+    // AC-10.7
+    #[cfg(unix)]
+    #[test]
+    fn plan_and_copy_follow_symlinked_files() {
+        use std::os::unix::fs::symlink;
+
+        let dir = fixture_dir("plan_and_copy_follow_symlinked_files");
+        let src = dir.join("src");
+        let dest = dir.join("dest");
+        fs::create_dir_all(&src).unwrap();
+        write_file(&dir.join("shared/reset.css"), "* { margin: 0 }");
+        symlink(dir.join("shared/reset.css"), src.join("reset.css")).unwrap();
+
+        let files = plan(&src, &dest).unwrap();
+
+        let labels: Vec<_> = files.iter().map(|f| f.label.as_str()).collect();
+        assert_eq!(labels, ["asset 'reset.css'"]);
+        copy(&files).unwrap();
+        let copied = dest.join("reset.css");
+        assert!(!copied.is_symlink(), "the link target must be copied");
+        assert_eq!(fs::read_to_string(copied).unwrap(), "* { margin: 0 }");
     }
 
     #[test]

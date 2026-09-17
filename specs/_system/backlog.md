@@ -1,6 +1,6 @@
 # Backlog
 
-Tracked improvements for mango. Each item can be handed to the dev pipeline as-is: `/spec-feature specs/_system/backlog.md#arch-1` for design-heavy work, `/ship-feature` for local changes. When an item is picked up, set its status to `in progress` and link the spec; when it is merged, set `done` with the commit.
+Tracked improvements for mango. Each item can be handed to the dev pipeline as-is: `/spec-feature specs/_system/backlog.md#arch-1` for design-heavy work, `/ship-feature` for local changes. When an item is picked up, set its status to `in progress` and link the spec; when it is merged, set `done`. Name the item ID in the commit subject (e.g. `… (RISK-2)`) so `git log --grep` finds the change — don't record commit hashes here, since they can't be written in the commit they describe and go stale on a rebase.
 
 Statuses: `open`, `in progress`, `done`, `dropped`. Sizes: **S** (one module, under a day), **M** (a few modules), **L** (cross-cutting).
 
@@ -18,7 +18,7 @@ Statuses: `open`, `in progress`, `done`, `dropped`. Sizes: **S** (one module, un
 | [OPS-1](#ops-1) | Continuous integration | medium | S | `/ship-feature` | a git remote | open |
 | [SPEC-1](#spec-1) | Confirm the constitution's open proposals | medium | S | manual | — | open |
 | [RISK-1](#risk-1) | Symlink loops in the site folder | medium | S | `/ship-feature` | — | open |
-| [RISK-2](#risk-2) | Symlinked folders inside the assets folder | medium | S | `/ship-feature` | — | open |
+| [RISK-2](#risk-2) | Symlinked folders inside the assets folder | medium | S | `/ship-feature` | — | done |
 | [RISK-3](#risk-3) | Raw HTML in content is trusted but undocumented | low | S | `/ship-feature` | — | open |
 | [RISK-4](#risk-4) | Unknown frontmatter keys are silently ignored | medium | S | `/spec-feature` | — | open |
 | [TEST-1](#test-1) | No test for CRLF line endings | low | S | `/ship-feature` | — | open |
@@ -156,9 +156,9 @@ Source: `specs/_system/overview.md`, "Risky areas" (items marked **Inferred, con
 `loader::traverse` recurses with `path.is_dir()`, which follows symlinks, and has no cycle guard: a symlink pointing at an ancestor folder recurses until the stack overflows. Decide whether to skip symlinked folders or detect cycles (canonical-path set), and add a test.
 
 ### RISK-2
-**Symlinked folders inside the assets folder** · medium · S · `/ship-feature` · open
+**Symlinked folders inside the assets folder** · medium · S · `/ship-feature` · done
 
-`assets::collect` uses `DirEntry::file_type()`, which does not follow symlinks, so a symlink to a folder is planned as a file and `fs::copy` fails after the output folder was cleaned. Either follow it during planning or reject it before cleaning, and add a test that the previous output survives.
+`assets::collect` used `DirEntry::file_type()`, which does not follow symlinks, so a symlink to a folder was planned as a file and `fs::copy` failed after the output folder was cleaned. Resolved by rejecting it before cleaning: `assets::plan` now classifies entries with `fs::metadata`, fails on a symlinked folder (`asset '<rel>' is a symlink to a directory`) and on an unresolvable link, and `tests/build.rs::build_fails_on_symlinked_asset_folder_keeping_output` proves the previous output survives.
 
 ### RISK-3
 **Raw HTML in content is trusted but undocumented** · low · S · `/ship-feature` · open
