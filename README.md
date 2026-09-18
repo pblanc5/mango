@@ -33,7 +33,7 @@ dist/               build output (emptied on every build)
 |---|---|
 | `mango build` | Build the site. Flags: `--site <dir>` (default `site`), `--templates <dir>` (default `meta/templates`), `--assets <dir>` (default `meta/assets`), `-o, --output <dir>` (default `dist`), `--config <file>` (default `mango.json`). |
 | `mango clean` | Remove the output folder (`-d, --dist <dir>`, default `dist`). |
-| `mango run`, `mango publish` | Not implemented yet; they exit with an error. |
+| `mango run` | Not implemented yet; it exits with an error. |
 
 Errors go to stderr and exit with status 1.
 
@@ -102,7 +102,7 @@ A build that fails on bad content, config, templates, assets or conflicting outp
 
 ## Known limitations
 
-- No dev server (`run`) or `publish` yet.
+- No dev server (`run`) yet. There is no `publish` command: deploying `dist/` is left to whatever tool you already use.
 - No pagination, section intro pages, syntax highlighting or automatic heading IDs.
 - `clean` has no `--config` option, so it does not protect a config file stored inside the output folder.
 - A symlink inside `meta/assets/` may point at a file (its contents are copied), but a symlink to a folder is a build error: use a real folder. A broken link or a link loop is an error too. The `--assets` folder itself may be a symlink.

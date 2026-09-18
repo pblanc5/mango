@@ -55,9 +55,6 @@ enum MangoActions {
     /// Run the dev server (not implemented yet)
     Run,
 
-    /// Publish the site (not implemented yet)
-    Publish,
-
     /// Remove the output directory
     Clean(CleanOpts),
 }
@@ -77,8 +74,6 @@ pub fn run() -> Result<(), MangoError> {
         MangoActions::Build(opts) => build(project_path, opts),
 
         MangoActions::Run => Err(not_implemented("run")),
-
-        MangoActions::Publish => Err(not_implemented("publish")),
 
         MangoActions::Clean(opts) => {
             let dist_path = Path::new(&opts.dist);

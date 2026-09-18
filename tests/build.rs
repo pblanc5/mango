@@ -1644,7 +1644,6 @@ fn help_shows_flag_descriptions() {
     for text in [
         "Build the site",
         "Run the dev server",
-        "Publish the site",
         "Remove the output directory",
     ] {
         assert!(main_help.contains(text), "missing '{text}':\n{main_help}");
@@ -1723,17 +1722,26 @@ fn fixture_build_is_deterministic() {
     }
 }
 
-// AC-7.3
 #[test]
-fn publish_command_is_not_implemented_error() {
-    let dir = temp_dir("publish_command_is_not_implemented_error");
+fn publish_is_not_a_command() {
+    let dir = temp_dir("publish_is_not_a_command");
     let output = run_mango(&["publish"], &dir);
 
-    assert_failure(&output, "publish");
+    assert!(!output.status.success(), "publish should not be a command");
+    let err = stderr(&output);
     assert!(
-        stderr(&output).contains("the 'publish' command is not implemented yet"),
-        "{}",
-        stderr(&output)
+        err.contains("unrecognized subcommand"),
+        "expected clap to reject it as unknown, got:\n{err}"
+    );
+    assert!(
+        !err.contains("not implemented"),
+        "the stub error should be gone, got:\n{err}"
+    );
+
+    let main_help = stdout(&run_mango(&["--help"], &dir));
+    assert!(
+        !main_help.contains("Publish"),
+        "help should not advertise publish:\n{main_help}"
     );
 }
 

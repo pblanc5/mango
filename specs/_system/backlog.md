@@ -8,6 +8,8 @@ Statuses: `open`, `in progress`, `done`, `dropped`. Sizes: **S** (one module, un
 
 | ID | Title | Priority | Size | Workflow | Depends on | Status |
 |---|---|---|---|---|---|---|
+| [FEAT-1](#feat-1) | Dev server (`run`) | medium | L | `/spec-feature` | ARCH-1, a dependency approval | open |
+| [FEAT-2](#feat-2) | `publish`: dropped, never implemented | — | — | — | — | dropped |
 | [ARCH-1](#arch-1) | Split the build into plan and commit; add `lib.rs` | high | L | `/spec-feature` | — | open |
 | [ARCH-2](#arch-2) | One output model instead of three | high | L | `/spec-feature` | ARCH-1, ARCH-3 | open |
 | [ARCH-3](#arch-3) | `Slug` and `Tag` newtypes | high | M | `/spec-feature` | — | open |
@@ -25,7 +27,7 @@ Statuses: `open`, `in progress`, `done`, `dropped`. Sizes: **S** (one module, un
 | [TEST-1](#test-1) | No test for CRLF line endings | low | S | `/ship-feature` | — | done |
 | [DOC-1](#doc-1) | Stale line references in the system overview | low | S | `/ship-feature` | — | open |
 
-Recommended order: ARCH-1 → ARCH-3 → ARCH-2, then ARCH-4 to ARCH-7 in any order. The RISK and TEST items are independent and can be done at any time.
+Recommended order: ARCH-1 → ARCH-3 → ARCH-2, then ARCH-4 to ARCH-7 in any order. FEAT-1 comes after ARCH-1, which gives it the seam it needs; FEAT-2 is closed as dropped. The RISK and TEST items are independent and can be done at any time.
 
 ---
 
@@ -128,6 +130,35 @@ Collision labels become `Display for ItemKind`; the sitemap selects `ItemKind::P
 
 ---
 
+## Features
+
+Product-level work, as opposed to the refactoring that makes up the rest of this backlog. `run` is declared in `src/cli.rs` and returns `MangoError::General("the 'run' command is not implemented yet")` with exit status 1; `README.md` lists it under "Known limitations". `publish` was declared the same way and has been removed — see FEAT-2 for why.
+
+### FEAT-1
+**Dev server (`run`)** · medium · L · `/spec-feature` · depends on ARCH-1 and a dependency approval · open
+
+**Problem.** `Commands::Run` takes no options and errors out. For a static site generator the edit-and-refresh loop is the day-to-day workflow, and without it every change means re-running `mango build` by hand and reloading the browser. `run_command_is_not_implemented_error` and `run_command_takes_no_options` pin the stub; both must be consciously replaced when this lands, not quietly deleted.
+
+**Settle these in the spec, before any code.**
+- **Which dependency, and is it approved?** A dev server needs an HTTP server and almost certainly a file watcher. `tide` was dropped rather than kept for this, and "no new dependencies without the maintainer's explicit approval" is a non-negotiable, so this is the first gate. `CLAUDE.md` is explicit that `run`'s flags and its server dependency are added when it is implemented, not before.
+- **What is served.** `dist/` on disk, or the in-memory `BuildPlan` with nothing written at all. Serving the plan avoids cleaning and rewriting the output folder on every keystroke, which is the main reason ARCH-1 comes first.
+- **Rebuild strategy.** Full rebuild per change (simple, and cheap once `plan()` exists) or incremental.
+- **Live reload** (inject a socket and refresh the page) or serve-and-reload-by-hand.
+- **Flags.** At least `--port`; plus the existing `--site`/`--templates`/`--assets`/`-o`/`--config`.
+
+**Done when.** `mango run` serves the built site over HTTP and rebuilds when content, templates, assets or the config change. A failed rebuild keeps serving the last good output and reports the error on stderr rather than exiting — the same "never destroy good output on bad input" guarantee `build` already makes. The stub tests are replaced by tests of the real behavior, and `README.md` documents the flags and any limitations.
+
+### FEAT-2
+**`publish`: dropped, never implemented** · — · — · — · — · dropped
+
+**Decided by the maintainer (2026-09-17): mango will not have a `publish` command.** The subcommand was declared in `src/cli.rs` early on and never had a meaning behind it — no target, protocol or requirement for it existed anywhere in the repo, and it did nothing but return "the 'publish' command is not implemented yet". Rather than specify one after the fact, it was removed: the enum variant, its dispatch arm, its help text and its stub test are gone, so `mango publish` is now a clap "unrecognized subcommand" error rather than a promise mango was not keeping.
+
+**Why dropped rather than specified.** Every plausible reading — commit `dist/` to a `gh-pages`-style branch, rsync or SFTP to a host, upload to object storage, call a host's deploy API — puts mango into the credential-handling and deployment business, needs at least one new dependency against a standing non-negotiable, and duplicates tooling site authors already have. The one reading that avoided all of that, shelling out to a command configured in `mango.json`, is a wrapper thin enough that the author can just run the command. mango's job ends at a correct, deterministic `dist/`.
+
+**Pinned by** `publish_is_not_a_command` in `tests/build.rs`, which asserts the command is rejected as unknown, that the old stub error is gone, and that `--help` no longer advertises it. If publishing is ever wanted, it starts as a new item with a decided scope, not as a resurrected stub.
+
+---
+
 ## Operations and specs
 
 ### OPS-1
@@ -144,6 +175,14 @@ No CI exists because the repository has no remote. Once one is added, run the de
 - The `/spec-feature` vs `/ship-feature` guidance.
 
 Confirm or change each, then remove the markers.
+
+**Evidence for the `AC-10` decision, found 2026-09-17 while dropping FEAT-2.** The constitution notes that "IDs have been reused across earlier batches", which understates it on two counts, and confirming `AC-10` fixes neither.
+
+- **Existing IDs collide, and mostly can't be disambiguated.** `AC-7.3` currently means three different things: "entries are sorted by `loc`, compared as plain strings" (`src/build/generate/sitemap.rs:152`, batch 4), "`Cargo.toml` dependencies are unchanged" (an earlier batch), and, until FEAT-2, "`mango publish` exits non-zero with the not-implemented message" (`tests/build.rs`). Some tags carry a `(batch N)` qualifier and most do not: 56 qualified against 125 bare, so the qualifier cannot be relied on to tell two uses of an ID apart.
+- **`AC-10` is already taken.** The proposal is that new specs start at group `AC-10`, but `AC-10.1` through `AC-10.9` are in use today across `src/build/generate/assets.rs` and `tests/build.rs`. Whatever is confirmed has to name a group that is actually free, or say how the next free one is found.
+- **The definitions are not in the repository.** Every criterion from the old `tasks.md`-driven batches is defined only in `.dev-pipeline/runs/**/01-plan*.md`, and `.dev-pipeline/` is gitignored (`.gitignore:5`). From a fresh clone, every `// AC-<group>.<n>` comment in `src/` and `tests/` resolves to nothing.
+
+This is a legacy problem, not an ongoing one: `spec-feature.yaml` publishes to `specs/{spec_id}/requirements.md`, a tracked path, so criteria from spec-driven runs are resolvable. So the decision to make alongside `AC-10` is what happens to the legacy tags — retire them, qualify each with its batch, or leave them as archaeology and accept that they don't resolve. Retiring the tag on a **withdrawn** criterion is already precedent: FEAT-2's test carries no AC ID, because the criterion it named was deleted rather than changed.
 
 ---
 
