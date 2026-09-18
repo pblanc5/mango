@@ -22,7 +22,7 @@ Arguments: `$ARGUMENTS`
   - publishing that gate's approved documents to their `publish_to` paths
   - the stages and loops up to the next gate, within the caps in the workflow file
 - **When to stop:** a scope change, a `blocked` verdict, a verdict with no handler, an exhausted cap, or a publish conflict stops the run. Continuing needs the user again. After a scope change, continuing means re-planning and re-approving.
-- **Git:** you may create the run's own branch and commit to it (step 3.4, step 4.6a), and nothing else. Never `push`. Never `reset`, `stash`, `clean`, `rebase`, `commit --amend`, `checkout -- <path>`, or any forced operation: those destroy uncommitted work, and a run's output sits uncommitted in the working tree until its first checkpoint. Never commit onto a branch this run did not create. Personas may never use git except to read (`status`, `diff`, `log`, `show`).
+- **Git:** you may create the run's own branch and commit to it (step 3.4, step 4.6a), and nothing else. Never `push` — this holds after the repository gains a remote, not just before: a run's output stays on this machine until the maintainer pushes it by hand. Never use `gh` or any other network write. Never `reset`, `stash`, `clean`, `rebase`, `commit --amend`, `checkout -- <path>`, or any forced operation: those destroy uncommitted work, and a run's output sits uncommitted in the working tree until its first checkpoint. Never commit onto a branch this run did not create. Personas may never use git except to read (`status`, `diff`, `log`, `show`).
 
 ## 1. Parse arguments
 - **`--list`:** find workflows (see step 2). Validate each one and print:
@@ -60,17 +60,26 @@ Check all of the following. Collect **every** problem and stop if there are any.
 8. **Stage keys.** No keys other than `id`, `persona`, `inputs`, `gate`, `on_fail`, `on_changes_requested`, `notes`, `publish_to`.
 
 ## 3. Start the run
-1. **Run id.** `run_id` = `<YYYYMMDD-HHMMSS>-<slug>`. The slug is up to 40 characters from the input, lowercase, a–z0–9 and hyphens.
-2. **Run folder.** `run_dir` = `.dev-pipeline/runs/<run_id>/`, relative to the project root.
-3. **Git baseline.** If `git rev-parse --is-inside-work-tree` succeeds, record:
-   - `head`: `git rev-parse HEAD`, or `null` if there are no commits
-   - `dirty`: the lines of `git status --porcelain`, excluding `.dev-pipeline/`
+1. **Run id.** `run_id` = `<YYYYMMDD-HHMMSS>-<slug>`. This computes a string; it writes nothing, and the gate in step 3.2 needs the slug to recognise a resume.
+   - If the input names a backlog item (`<path>#<id>`, or an ID matching `[A-Z]+-[0-9]+`), the slug is `<id>-<short-desc>`: the ID lowercased, then two to four kebab-case words describing **the change**, taken from the item's title rather than the prompt's phrasing. `specs/_system/backlog.md#test-1 — No test for CRLF line endings…` → `test-1-crlf-line-endings`.
+   - Otherwise, up to 40 characters from the input, lowercase, a–z0–9 and hyphens.
+   - Never carry file paths or instruction fragments into the slug. `specs-system-backlog-md-test-1-no-test` is what this rule prevents: the path is noise, the ID is buried, and `no-test` was a fragment of the prompt that inverts the item's meaning.
+2. **Start state. Gate before anything is written.** If `git rev-parse --is-inside-work-tree` succeeds, record `head` (`git rev-parse HEAD`, or `null` if there are no commits), `branch_now` (`git rev-parse --abbrev-ref HEAD`), `dirty` (the lines of `git status --porcelain`, excluding `.dev-pipeline/`) and `integration_branch`, resolved in order: (1) `git symbolic-ref --short refs/remotes/origin/HEAD` with `origin/` stripped; (2) otherwise whichever of `main` or `master` exists locally; (3) if both exist or neither does, stop and ask the user which one — never guess. Below, `<int>` means the resolved value. Then gate on them **before** creating the run folder or any other file, so a refused run leaves nothing behind:
+   - **On `<int>`, clean** → continue to step 3.3.
+   - **On `agents/claude/<slug>` for this run's own slug, clean** → a resume. Continue, reuse that branch, and do not nest another.
+   - **On any other branch** — a `users/…` branch, or an `agents/claude/…` branch for a different item — **stop and ask.** Create nothing: no run folder, no state file, no branch. Report `branch_now` and how far ahead of `<int>` it is (`git rev-list --count <int>..HEAD`), then offer:
+     - **(a)** stop, so the maintainer can finish that work and squash-merge it first — the default, and what you recommend;
+     - **(b)** start anyway from `<int>` (`git checkout -b agents/claude/<slug> <int>`), leaving the current branch untouched;
+     - **(c)** branch from the current branch deliberately. This stacks the run on unlanded work, so the eventual squash-merge carries that work to `<int>` too. Record `"branch_point_override": "<branch_now>"` in state and repeat that consequence in the final report.
 
-   Otherwise the baseline is `"not a git repo"`.
-4. **Run branch.** Only if `git_baseline` is not `"not a git repo"`:
-   - If `dirty` (from step 3.3) is empty, create and check out `pipeline/<slug>` from the current HEAD, where `<slug>` is the run id's slug. Record `"branch": "pipeline/<slug>"` in state.
-   - If `dirty` is **not** empty, do not create a branch and do not commit anything. Report the dirty paths and ask the user to choose: **(a)** stop, so they can commit or stash first; **(b)** proceed with no branch and no checkpoints, exactly as runs behaved before this rule. Record `"branch": null` and, for (b), `"branch_skipped": "dirty tree"`. End your turn and wait.
-   - If HEAD is already on a branch this session created for this item, use it and record it rather than nesting another.
+     End your turn and wait.
+   - **Dirty tree, on any branch** → stop and ask the same way, offering only **(a)**. The run needs a clean tree to branch and checkpoint. Report the dirty paths.
+
+   Otherwise the baseline is `"not a git repo"`: skip the gate and run with no branch and no checkpoints.
+3. **Run folder.** `run_dir` = `.dev-pipeline/runs/<run_id>/`, relative to the project root.
+4. **Run branch.** Only if the baseline is not `"not a git repo"`: create and check out `agents/claude/<slug>` from the branch point the gate in step 3.2 settled on. Record `"branch": "agents/claude/<slug>"` and `"branch_point": <head>` in state.
+
+   If the slug has an `<id>` segment, list branches matching `*/<id>-*` before creating it. If any exist, report them and ask whether this is a resume, a discarded attempt, or genuinely parallel work, rather than opening a second branch for the same item. A slug with no ID skips this check — there is no item to collide on.
 
    A run branch is created before any persona runs, so every file a run touches is on it.
 5. **Context files.** For each path in `context`, check whether it exists. Existing paths become `context_files`. Missing paths go in `missing_context`, and you warn the user. The run continues.
@@ -91,8 +100,10 @@ Check all of the following. Collect **every** problem and stop if there are any.
   "pending": { "feedback": null, "user_notes": null },
   "total_attempts": 0,
   "max_total_attempts": 24,
-  "git_baseline": { "head": "…", "dirty": [] },
-  "branch": "pipeline/risk-1-symlink-loops",
+  "git_baseline": { "head": "…", "branch_now": "master", "dirty": [] },
+  "integration_branch": "master",
+  "branch": "agents/claude/risk-1-symlink-loops",
+  "branch_point": "…",
   "checkpoints": [],
   "context_files": ["specs/constitution.md"],
   "missing_context": [],
@@ -143,7 +154,11 @@ context_files:
 published:
   - <each target in state.published, or none>
 publish_to: <S.publish_to with {run_id} filled in, or none>
-git_baseline: <head and dirty list, or "not a git repo">
+git_baseline: <head, branch_now and dirty list, or "not a git repo">
+branch: <state.branch, or "none">
+branch_point: <state.branch_point, or "none">
+checkpoints:
+  - <stage> v<attempt>  <sha>, oldest first, or none
 
 Do your job as described in your instructions. Return your artifact document as your final message, per your Output rules.
 ~~~
@@ -260,8 +275,8 @@ If `state.branch` is set and it is not the current branch, check it out before c
    - **published documents** (from `published`)
    - **files changed:** in a git repo, `git diff --stat <branch point>..HEAD` plus any still-uncommitted paths; otherwise the Developer's listed files
    - **branch and checkpoints:** the branch name and one line per checkpoint (`<stage> v<attempt>  <sha>  <summary>`)
-   - a closing line, when a branch was created: **Nothing is on `master`.** The work is on `<branch>` as `<n>` checkpoint commits. Review with `git diff master..<branch>`, then say the word and I will squash-merge it to `master` with a message you approve and delete the branch. To discard it instead: `git checkout master && git branch -D <branch>`.
-   - when no branch was created, the old closing line applies instead: **Nothing was committed.** Review with `git diff`, then commit code and specs together when you're happy.
+   - a closing line, when a branch was created: **Nothing is on `<int>`.** The work is on `<branch>` as `<n>` checkpoint commits. Review with `git diff <int>..<branch>`, then say the word and I will squash-merge it to `<int>` with a message you approve and delete the branch. To discard it instead: `git checkout <int> && git branch -D <branch>`.
+   - when there is no branch, which now happens only outside a git repo: **Nothing was committed, and this is not a git repo.** The run's output is in the working tree — review the files listed above and save them however this project tracks work.
 
    **Never squash-merge on your own initiative.** The user asks, every time.
 
@@ -271,13 +286,13 @@ If `state.branch` is set and it is not the current branch, check it out before c
    - the stage, attempt, and reason
    - the artifact's "Questions / blockers" section, or its "Feedback for next stage" for caps and unhandled verdicts
    - how to continue: `/run-workflow --resume <run_id> [--from <stage>] <your answers or instructions>`
-   - when a branch exists: its name, the checkpoints so far, and that the work is preserved on it — discard with `git checkout master && git branch -D <branch>`, or continue with `--resume`
+   - when a branch exists: its name, the checkpoints so far, and that the work is preserved on it — discard with `git checkout <int> && git branch -D <branch>`, or continue with `--resume`
 3. For `scope_change`, say explicitly that resuming returns to planning and needs re-approval. Mention `--from <stage>` for going back further, e.g. to requirements.
 
 ## Rules
 - **You write only two kinds of file:** files in `run_dir`, and approved documents to validated `publish_to` targets through step 5.1. Personas return content and you save it.
 - Never edit any other project file, run tests, write specs, or review code yourself.
-- Git: only the run branch and its checkpoints (step 0). Never push. Never squash-merge unless the user asks.
+- Git: only the run branch and its checkpoints (step 0). Never push, even once a remote exists. Never squash-merge unless the user asks.
 - Never skip, reorder, or add stages, and never invent or change a verdict.
 - Save `state.json` after every state change so any run can be resumed.
 - Keep chat updates short. The detail lives in the artifacts.

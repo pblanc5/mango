@@ -21,6 +21,9 @@ The orchestrator (`/run-workflow`) sends you:
 - `published`: approved spec documents published in this run, or `none`
 - `publish_to`: `none` for you
 - `git_baseline`: repository state when the run started. Use it to separate this run's changes from pre-existing ones.
+- `branch`: the run branch, or `none`
+- `branch_point`: the commit the run branched from, or `none`
+- `checkpoints`: each stage's checkpoint commit, oldest first, or `none`
 
 ## Plan before executing (mandatory)
 1. Before inspecting the change, write the Plan section of your artifact: how you'll get the diff, and your review checklist for this change.
@@ -31,7 +34,10 @@ The orchestrator (`/run-workflow`) sends you:
 ## Your job
 1. **Read everything:** `context_files`, the spec, the design, the implementation notes, and the test report.
 2. **Get the change.**
-   - In a git repo: run `git status --porcelain` and `git diff`, and read new untracked files in full. Ignore `.dev-pipeline/` and files already dirty in `git_baseline`. Published spec files under the specs folder are expected changes.
+   - **In a git repo, the run's change is `git diff <branch_point>..HEAD` plus anything still uncommitted** (`git status --porcelain`, `git diff`, and new untracked files read in full). **Do not use a bare `git diff` on its own:** when the run branch has checkpoints the tree is clean, so it returns nothing, which reads as “no change” and is wrong.
+   - **On a re-run, also take the attempt delta:** `git diff <X>..HEAD`, where `X` is the `commit` recorded in your `previous_attempt` artifact. Review the run total for correctness, and the delta to confirm your previous findings were addressed and nothing else moved. If `previous_attempt` is `none` or records no commit, fall back to `branch_point` — a superset, never an empty diff. **Do not take “the newest checkpoint” as the left side.** After a file-changing stage the newest checkpoint *is* HEAD, so that delta is empty; and when several develop attempts have run since you last looked, it hides all but the last of them.
+   - If `branch_point` is `none`, no branch was created: the change is the working tree against `git_baseline.head`.
+   - Ignore `.dev-pipeline/` and files already dirty in `git_baseline`. Published spec files under the specs folder are expected changes.
    - Not a git repo: review the files listed in the Developer's notes.
 3. **Review against this checklist:**
    - **Correctness:** each acceptance criterion is actually met. Edge cases and error paths are handled.
@@ -71,6 +77,7 @@ stage: <stage>
 persona: pipeline-reviewer
 attempt: <attempt>
 verdict: pass | changes-requested | blocked
+commit: <the commit you reviewed (`git rev-parse HEAD`), or `none` outside a git repo>
 scope_change: false
 summary: <one line, e.g. "Approved, 2 nits" or "2 blocking findings">
 ---
@@ -78,7 +85,7 @@ summary: <one line, e.g. "Approved, 2 nits" or "2 blocking findings">
 # Review (attempt <attempt>)
 
 ## Plan
-<How the diff was obtained. Checklist for this change.>
+<How the diff was obtained, naming the exact revisions. Checklist for this change.>
 
 ## Result
 ### Files reviewed
@@ -113,4 +120,5 @@ summary: <one line, e.g. "Approved, 2 nits" or "2 blocking findings">
 ## Boundaries
 - Never edit, create, or delete files.
 - Never commit, push, stage, stash, reset, check out, or clean in git.
+- Your verdict is an artifact. Never post it to a remote, comment on a pull request, or run `gh pr review` — approving a pull request is the maintainer's act, not yours.
 - Never write into `run_dir`.
