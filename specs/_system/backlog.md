@@ -18,7 +18,8 @@ Statuses: `open`, `in progress`, `done`, `dropped`. Sizes: **S** (one module, un
 | [ARCH-6](#arch-6) | Tidy the `Page` model | medium | S | `/ship-feature` | — | open |
 | [ARCH-7](#arch-7) | Smaller cleanups: frontmatter return type, CLI path types | low | S | `/ship-feature` | — | open |
 | [OPS-1](#ops-1) | Continuous integration | medium | S | `/ship-feature` | a git remote | open |
-| [SPEC-1](#spec-1) | Confirm the constitution's open proposals | medium | S | manual | — | open |
+| [SPEC-1](#spec-1) | Confirm the constitution's open proposals | medium | S | manual | — | done |
+| [SPEC-2](#spec-2) | Reconstruct the legacy acceptance criteria into tracked specs | medium | M | `/ship-feature` | — | open |
 | [RISK-1](#risk-1) | Symlink loops in the site folder | medium | S | `/ship-feature` | — | done |
 | [RISK-2](#risk-2) | Symlinked folders inside the assets folder | medium | S | `/ship-feature` | — | done |
 | [RISK-3](#risk-3) | Raw HTML in content is trusted but undocumented | low | S | `/ship-feature` | — | open |
@@ -167,22 +168,28 @@ Product-level work, as opposed to the refactoring that makes up the rest of this
 No CI exists because the repository has no remote. Once one is added, run the definition-of-done gate (`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`) on every push, on Linux and Windows (the code has Windows-specific paths in slug handling and `clean_contents`).
 
 ### SPEC-1
-**Confirm the constitution's open proposals** · medium · S · manual · open
+**Confirm the constitution's open proposals** · medium · S · manual · done
 
-`specs/constitution.md` has items marked **Proposed, confirm**:
-- New specs start at acceptance-criteria group `AC-10`.
-- "Keep diffs reviewable by formatting only what you change."
-- The `/spec-feature` vs `/ship-feature` guidance.
+All **Proposed, confirm** markers are gone from `specs/constitution.md`. Decided by the maintainer, 2026-09-17:
 
-Confirm or change each, then remove the markers.
+- **Acceptance-criteria IDs are spec-scoped:** `AC-<spec-id>.<n>`, so an ID names the file that defines it (`// AC-arch-1.3` → `specs/arch-1/requirements.md`) and two specs cannot collide. This **replaces** the proposal that new specs start at group `AC-10`, which was withdrawn as already false: `AC-1` through `AC-12` are all in use today, every spec-driven run consumes another group, and any number written into the constitution is stale after the next run.
+- **"Keep diffs reviewable by formatting only what you change" is dropped.** `cargo fmt` runs over the whole crate in the gate, so the rule cannot apply to Rust; nothing enforced it for Markdown; and its wording came from the gitignored `tasks.md`, which the constitution already says is not project policy. A rule that binds nothing is noise.
+- **The `/spec-feature` vs `/ship-feature` lists are confirmed**, with one carve-out: removing an unimplemented surface has no behavior to specify, so it can take the direct route. FEAT-2 is the precedent; adding or changing a surface still needs `/spec-feature`.
 
-**Evidence for the `AC-10` decision, found 2026-09-17 while dropping FEAT-2.** The constitution notes that "IDs have been reused across earlier batches", which understates it on two counts, and confirming `AC-10` fixes neither.
+The fourth decision — what happens to the existing numeric tags — is a job rather than a decision, and is tracked as [SPEC-2](#spec-2).
 
-- **Existing IDs collide, and mostly can't be disambiguated.** `AC-7.3` currently means three different things: "entries are sorted by `loc`, compared as plain strings" (`src/build/generate/sitemap.rs:152`, batch 4), "`Cargo.toml` dependencies are unchanged" (an earlier batch), and, until FEAT-2, "`mango publish` exits non-zero with the not-implemented message" (`tests/build.rs`). Some tags carry a `(batch N)` qualifier and most do not: 56 qualified against 125 bare, so the qualifier cannot be relied on to tell two uses of an ID apart.
-- **`AC-10` is already taken.** The proposal is that new specs start at group `AC-10`, but `AC-10.1` through `AC-10.9` are in use today across `src/build/generate/assets.rs` and `tests/build.rs`. Whatever is confirmed has to name a group that is actually free, or say how the next free one is found.
-- **The definitions are not in the repository.** Every criterion from the old `tasks.md`-driven batches is defined only in `.dev-pipeline/runs/**/01-plan*.md`, and `.dev-pipeline/` is gitignored (`.gitignore:5`). From a fresh clone, every `// AC-<group>.<n>` comment in `src/` and `tests/` resolves to nothing.
+### SPEC-2
+**Reconstruct the legacy acceptance criteria into tracked specs** · medium · M · `/ship-feature` · open
 
-This is a legacy problem, not an ongoing one: `spec-feature.yaml` publishes to `specs/{spec_id}/requirements.md`, a tracked path, so criteria from spec-driven runs are resolvable. So the decision to make alongside `AC-10` is what happens to the legacy tags — retire them, qualify each with its batch, or leave them as archaeology and accept that they don't resolve. Retiring the tag on a **withdrawn** criterion is already precedent: FEAT-2's test carries no AC ID, because the criterion it named was deleted rather than changed.
+**Problem.** 181 `// AC-<group>.<n>` tags across `src/` and `tests/` resolve to nothing from a clone. Their definitions exist only in `.dev-pipeline/runs/**/01-plan*.md`, which is gitignored, and the IDs collide: four separate `tasks.md`-driven batches each defined their own `AC-1` to `AC-9`, and only 56 of the 181 tags carry a `(batch N)` qualifier to tell them apart. 335 criteria are recoverable across seven runs.
+
+**Two halves, in order.**
+1. **Publish the definitions.** Each run's latest `01-plan.v*.md` lists its criteria in a consistent `- AC-X.Y <text>` format, so extraction is mechanical. Naming the four unnamed `tasks.md` batches is part of the work: they correspond to the features they shipped, not to spec ids.
+2. **Attribute the tags.** `git log -S'<the tag line>' -- <file>` gives the commit that introduced a tag, and its date places that commit in one run; the tag is then rewritten into the spec-scoped form the constitution now requires. Verified as a method on `tests/build.rs`. Lines carrying several IDs, and tags moved by later edits, need checking by hand.
+
+**Risk, and why this is more urgent than its priority suggests.** The run artifacts are local to one machine and are not in git. If they are lost, half 1 becomes impossible and the only remaining option is to delete the tags.
+
+**Done when.** Every AC tag in `src/` and `tests/` either resolves to a criterion in a tracked file under `specs/` or has been removed as withdrawn; `cargo test` still passes, since this touches comments only; and the constitution's "Legacy numeric IDs" bullet is replaced by a statement that tags resolve.
 
 ---
 
