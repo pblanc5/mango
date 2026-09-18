@@ -1,8 +1,8 @@
 # Backlog
 
-Tracked improvements for mango. Each item can be handed to the dev pipeline as-is: `/spec-feature specs/_system/backlog.md#arch-1` for design-heavy work, `/ship-feature` for local changes. When an item is picked up, set its status to `in progress` and link the spec; when it is merged, set `done`. Name the item ID in the commit subject (e.g. `… (RISK-2)`) so `git log --grep` finds the change — don't record commit hashes here, since they can't be written in the commit they describe and go stale on a rebase.
+Tracked improvements for mango. Each item can be handed to the dev pipeline as-is: `/spec-feature specs/_system/backlog.md#arch-1` for design-heavy work, `/ship-feature` for local changes. An item is not marked when it is picked up: the branch is that signal — `agents/claude/<id>-<short-desc>` for agent work, `users/patrick/<id>-<short-desc>` for work done by hand, per [the constitution](../constitution.md) — and the item goes `open` → `done` in the squash commit that lands it. Name the item ID in the commit subject (e.g. `… (RISK-2)`) so `git log --grep` finds the change — don't record commit hashes here, since they can't be written in the commit they describe and go stale on a rebase.
 
-Statuses: `open`, `in progress`, `done`, `dropped`. Sizes: **S** (one module, under a day), **M** (a few modules), **L** (cross-cutting).
+Statuses: `open`, `done`, `dropped`. Sizes: **S** (one module, under a day), **M** (a few modules), **L** (cross-cutting).
 
 ## Index
 
