@@ -19,7 +19,8 @@ Statuses: `open`, `in progress`, `done`, `dropped`. Sizes: **S** (one module, un
 | [ARCH-7](#arch-7) | Smaller cleanups: frontmatter return type, CLI path types | low | S | `/ship-feature` | — | open |
 | [OPS-1](#ops-1) | Continuous integration | medium | S | `/ship-feature` | a git remote | open |
 | [SPEC-1](#spec-1) | Confirm the constitution's open proposals | medium | S | manual | — | done |
-| [SPEC-2](#spec-2) | Reconstruct the legacy acceptance criteria into tracked specs | medium | M | `/ship-feature` | — | open |
+| [SPEC-2](#spec-2) | Publish the legacy acceptance criteria into tracked specs | medium | M | `/ship-feature` | — | done |
+| [SPEC-3](#spec-3) | Rewrite the legacy AC tags into spec-scoped form | low | M | `/ship-feature` | ARCH-1 | open |
 | [RISK-1](#risk-1) | Symlink loops in the site folder | medium | S | `/ship-feature` | — | done |
 | [RISK-2](#risk-2) | Symlinked folders inside the assets folder | medium | S | `/ship-feature` | — | done |
 | [RISK-3](#risk-3) | Raw HTML in content is trusted but undocumented | low | S | `/ship-feature` | — | open |
@@ -179,17 +180,26 @@ All **Proposed, confirm** markers are gone from `specs/constitution.md`. Decided
 The fourth decision — what happens to the existing numeric tags — is a job rather than a decision, and is tracked as [SPEC-2](#spec-2).
 
 ### SPEC-2
-**Reconstruct the legacy acceptance criteria into tracked specs** · medium · M · `/ship-feature` · open
+**Publish the legacy acceptance criteria into tracked specs** · medium · M · `/ship-feature` · done
 
-**Problem.** 181 `// AC-<group>.<n>` tags across `src/` and `tests/` resolve to nothing from a clone. Their definitions exist only in `.dev-pipeline/runs/**/01-plan*.md`, which is gitignored, and the IDs collide: four separate `tasks.md`-driven batches each defined their own `AC-1` to `AC-9`, and only 56 of the 181 tags carry a `(batch N)` qualifier to tell them apart. 335 criteria are recoverable across seven runs.
+**201 criteria across 48 requirements** are now in [`specs/_system/legacy-criteria/`](legacy-criteria/README.md), recovered verbatim from each run's approved plan artifact, each with the `## Verified by` table from that run's test report naming the test that checked it. Before this, every `// AC-<group>.<n>` comment in `src/` and `tests/` resolved to nothing from a clone: the definitions existed only in the gitignored `.dev-pipeline/runs/**`.
 
-**Two halves, in order.**
-1. **Publish the definitions.** Each run's latest `01-plan.v*.md` lists its criteria in a consistent `- AC-X.Y <text>` format, so extraction is mechanical. Naming the four unnamed `tasks.md` batches is part of the work: they correspond to the features they shipped, not to spec ids.
-2. **Attribute the tags.** `git log -S'<the tag line>' -- <file>` gives the commit that introduced a tag, and its date places that commit in one run; the tag is then rewritten into the spec-scoped form the constitution now requires. Verified as a method on `tests/build.rs`. Lines carrying several IDs, and tags moved by later edits, need checking by hand.
+**Numbers corrected during the work.** Earlier estimates of 335 and then 249 criteria were both inflated by counting *references* — test-plan mappings (`- AC-1.1 → test_name`, written at column 0 in batch 2) and risk notes that cite an ID. Only definitions inside a `## Requirements` section count, and there are 201.
 
-**Risk, and why this is more urgent than its priority suggests.** The run artifacts are local to one machine and are not in git. If they are lost, half 1 becomes impossible and the only remaining option is to delete the tags.
+**The ambiguity is now documented rather than removed.** The four `tasks.md` batches each numbered from `AC-1`, so `AC-1` to `AC-6` are four-way ambiguous, `AC-7` three-way, `AC-8`–`AC-9` two-way, and `AC-10`–`AC-12` unique. The index states this per group, and gives the lookup that does work: find the **test's name** in the `## Verified by` tables, which identifies the run, then resolve the ID inside that file. Verified end to end on the three-way `AC-7.3`.
 
-**Done when.** Every AC tag in `src/` and `tests/` either resolves to a criterion in a tracked file under `specs/` or has been removed as withdrawn; `cargo test` still passes, since this touches comments only; and the constitution's "Legacy numeric IDs" bullet is replaced by a statement that tags resolve.
+**Not done here:** rewriting the tags in the code, which is [SPEC-3](#spec-3).
+
+### SPEC-3
+**Rewrite the legacy AC tags into spec-scoped form** · low · M · `/ship-feature` · depends on ARCH-1 · open
+
+**Problem.** The 181 `// AC-<group>.<n>` comments in `src/` and `tests/` now resolve (SPEC-2), but only through a lookup: the number alone is ambiguous for every group below `AC-10`. Rewriting each to the spec-scoped `AC-<spec-id>.<n>` form the constitution requires would make them self-identifying.
+
+**Why it waits for ARCH-1.** ARCH-1 splits the build into `plan`/`commit`, adds `lib.rs`, and moves pipeline tests in-process out of `tests/build.rs`. That will move, rewrite and delete a significant share of the 181 tag sites. Doing this first means doing part of it twice.
+
+**Method.** For each tag, the test's name resolves it against the `## Verified by` tables in `specs/_system/legacy-criteria/`. Where a test has since been renamed, `git log -S'<the tag line>' -- <file>` gives the commit that introduced it and its date places it in one run. Both are mechanical; lines carrying several IDs need care.
+
+**Done when.** Every AC tag in `src/` and `tests/` is spec-scoped or removed as withdrawn, `cargo test` still passes (comments only), and the constitution's "Legacy numeric IDs" bullet says tags are self-identifying.
 
 ---
 
