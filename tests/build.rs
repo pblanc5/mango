@@ -2062,6 +2062,170 @@ fn build_accepts_utf8_bom_before_frontmatter() {
     assert!(html.contains("<h1>Bom</h1>"), "{html}");
 }
 
+/// Rewrites every line ending in `text` to CRLF, whatever it started as, so a
+/// test input does not depend on how this file was checked out.
+fn crlf(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\n', "\r\n")
+}
+
+/// A dated, tagged page in LF form, built from one source so the CRLF twin
+/// cannot drift. The last two paragraphs are deliberate: pulldown-cmark
+/// normalizes line endings in every other construct here (paragraphs, the
+/// fenced code block), so a `\r` left in the body only becomes visible in
+/// raw *inline* HTML, which is passed through verbatim (the wrapped `<span>`),
+/// or as the doubled space of a code span broken across two lines. Both are
+/// asserted in `build_accepts_crlf_line_endings`; keep them.
+fn line_endings_page() -> String {
+    "---\n\
+     {\"title\": \"Line Endings\", \"author\": \"tester\", \"description\": \"desc\", \
+     \"date\": \"2026-01-24\", \"tags\": [\"crlf\"], \"draft\": false}\n\
+     ---\n\
+     # Line Endings\n\
+     \n\
+     First paragraph.\n\
+     \n\
+     ```text\n\
+     code line one\n\
+     code line two\n\
+     ```\n\
+     \n\
+     Second paragraph, with a wrapped inline tag: <span\n\
+     class=\"note\">raw HTML across two lines</span>.\n\
+     \n\
+     A code span `spanning\n\
+     two lines` ends the page.\n"
+        .to_string()
+}
+
+// AC-12.7, AC-12.9
+#[test]
+fn build_accepts_crlf_line_endings() {
+    let dir = temp_dir("build_accepts_crlf_line_endings");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    let config = dir.join("mango.json");
+    write_file(&site.join("notes/endings.md"), &crlf(&line_endings_page()));
+    write_file(&config, r#"{"base_url": "https://example.com"}"#);
+
+    assert_success(&build_temp_site_with_config(&site, &out, &config));
+
+    // The exact manifest, so an unexpected output is caught too.
+    let mut expected = vec![
+        "assets/css/main.css",
+        "assets/images/logo.svg",
+        "assets/images/projects/weather-station.svg",
+        "feed.xml",
+        "index.html",
+        "notes/endings/index.html",
+        "notes/index.html",
+        "sitemap.xml",
+        "tags/crlf/index.html",
+        "tags/index.html",
+    ];
+    expected.sort();
+    let files: Vec<String> = snapshot(&out)
+        .into_iter()
+        .map(|f| f.replace('\\', "/"))
+        .collect();
+    assert_eq!(files, expected);
+
+    let html = fs::read_to_string(out.join("notes/endings/index.html")).unwrap();
+    assert!(html.contains("<h1>Line Endings</h1>"), "{html}");
+    assert!(html.contains("<p>First paragraph.</p>"), "{html}");
+    assert!(html.contains("code line one"), "{html}");
+    // A `\r` left inside a JSON date or tag value would have been rejected by
+    // `parse_date` / `validate_tags`, so these prove the frontmatter is clean.
+    assert!(html.contains(r#"<time datetime="2026-01-24">"#), "{html}");
+    assert!(html.contains(r#"href="/tags/crlf/""#), "{html}");
+
+    // AC-12.9: no carriage return reaches the output. The HTML check is scoped
+    // to the rendered content region so the committed templates' own line
+    // endings (which a Windows checkout may rewrite) cannot affect it.
+    //
+    // What makes this check bite: pulldown-cmark normalizes line endings in
+    // almost everything it parses -- paragraphs, fenced and indented code,
+    // HTML blocks -- so those constructs would render `\r`-free even if
+    // `frontmatter::parse` stopped normalizing the body. Raw *inline* HTML is
+    // the exception: it is passed through verbatim, so the wrapped `<span>` in
+    // `line_endings_page` carries whatever line ending the body has. That
+    // construct is what this assertion depends on; do not remove it, and keep
+    // the two positive checks below, which state the expectation directly. The
+    // second of them (the code span) is an independent discriminator, so if a
+    // future pulldown-cmark normalizes inline HTML too, this test weakens but
+    // does not go vacuous; the unit tests in `frontmatter.rs` remain the
+    // primary guard either way. The feed and sitemap are checked whole: mango
+    // writes them itself and embeds frontmatter strings verbatim.
+    let content = between(&html, "</header>", "</article>");
+    assert!(
+        !content.contains('\r'),
+        "carriage return in rendered content: {content:?}"
+    );
+    assert!(
+        content.contains("<span\nclass=\"note\">raw HTML across two lines</span>"),
+        "the raw inline HTML construct must survive with LF endings: {content:?}"
+    );
+    // The second discriminator, independent of the one above: CommonMark turns
+    // each line ending inside a code span into a space, so an LF body gives one
+    // space here and a CRLF body would give two.
+    assert!(
+        content.contains("<code>spanning two lines</code>"),
+        "a multi-line code span must render with a single space: {content:?}"
+    );
+    for generated in ["feed.xml", "sitemap.xml"] {
+        let xml = fs::read_to_string(out.join(generated)).unwrap();
+        assert!(!xml.contains('\r'), "carriage return in {generated}: {xml}");
+    }
+    let feed = fs::read_to_string(out.join("feed.xml")).unwrap();
+    assert!(feed.contains("<title>Line Endings</title>"), "{feed}");
+    assert!(
+        feed.contains("<pubDate>Sat, 24 Jan 2026 00:00:00 +0000</pubDate>"),
+        "{feed}"
+    );
+}
+
+// AC-12.8
+#[test]
+fn crlf_and_lf_sites_build_identical_output() {
+    // A CRLF source tree and its LF twin must produce byte-identical output,
+    // feed and sitemap included (hence the configured `base_url`; mango writes
+    // those two itself and embeds frontmatter strings verbatim).
+    //
+    // This is a symmetry property, and it is worth being clear about its
+    // limit: a regression that changes how *every* body is joined perturbs the
+    // LF and CRLF builds identically, so the two outputs stay equal and this
+    // test stays green. Catching that is the job of the unit tests and of the
+    // `\r` assertions in `build_accepts_crlf_line_endings`. What this test does
+    // catch is any handling that treats the two inputs *differently*.
+    let dir = temp_dir("crlf_and_lf_sites_build_identical_output");
+    let lf_source = line_endings_page();
+    let crlf_source = crlf(&lf_source);
+    assert_ne!(lf_source, crlf_source, "the two inputs must differ");
+
+    let lf_site = dir.join("lf-site");
+    let crlf_site = dir.join("crlf-site");
+    let lf_out = dir.join("lf-dist");
+    let crlf_out = dir.join("crlf-dist");
+    let config = dir.join("mango.json");
+    // Same relative file name in both sites, so the slugs and URLs match.
+    write_file(&lf_site.join("notes/endings.md"), &lf_source);
+    write_file(&crlf_site.join("notes/endings.md"), &crlf_source);
+    write_file(&config, r#"{"base_url": "https://example.com"}"#);
+
+    assert_success(&build_temp_site_with_config(&lf_site, &lf_out, &config));
+    assert_success(&build_temp_site_with_config(&crlf_site, &crlf_out, &config));
+
+    let lf_files = snapshot(&lf_out);
+    assert_eq!(snapshot(&crlf_out), lf_files, "output manifests differ");
+    assert!(!lf_files.is_empty(), "nothing was built");
+    for rel in &lf_files {
+        assert_eq!(
+            fs::read(crlf_out.join(rel)).unwrap(),
+            fs::read(lf_out.join(rel)).unwrap(),
+            "{rel} differs between the CRLF and LF builds"
+        );
+    }
+}
+
 fn list_files(dir: &PathBuf) -> Vec<String> {
     let mut files = Vec::new();
     if let Ok(entries) = fs::read_dir(dir) {
