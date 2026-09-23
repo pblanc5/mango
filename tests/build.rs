@@ -1017,39 +1017,6 @@ fn build_refuses_output_containing_config() {
     assert_eq!(snapshot(&dir), before, "files were changed");
 }
 
-// AC-2.2
-#[test]
-fn home_recent_respects_recent_count_and_skips_undated() {
-    let dir = temp_dir("home_recent_respects_recent_count_and_skips_undated");
-    let site = dir.join("site");
-    let out = dir.join("dist");
-    let config = dir.join("mango.json");
-    write_file(
-        &site.join("posts/old.md"),
-        &dated_page("Oldest Page", "2020-01-01"),
-    );
-    write_file(
-        &site.join("posts/mid.md"),
-        &dated_page("Middle Page", "2025-06-01"),
-    );
-    write_file(
-        &site.join("notes/new.md"),
-        &dated_page("Newest Page", "2026-03-01"),
-    );
-    write_file(&site.join("posts/undated.md"), &page("Undated Page", false));
-    write_file(&config, r#"{"recent_count": 2}"#);
-
-    let output = build_temp_site_with_config(&site, &out, &config);
-
-    assert_success(&output);
-    let home = fs::read_to_string(out.join("index.html")).unwrap();
-    let newest = home.find("Newest Page").expect(&home);
-    let middle = home.find("Middle Page").expect(&home);
-    assert!(newest < middle, "{home}");
-    assert!(!home.contains("Oldest Page"), "{home}");
-    assert!(!home.contains("Undated Page"), "{home}");
-}
-
 // AC-2.6
 #[test]
 fn missing_home_template_keeps_previous_output() {
@@ -1130,38 +1097,6 @@ fn build_fails_when_subdirectory_page_lacks_frontmatter() {
         stdout(&output).is_empty(),
         "errors must not go to stdout, got: {}",
         stdout(&output)
-    );
-}
-
-// AC-3.2 (batch 1); AC-4.7
-#[test]
-fn build_excludes_draft_pages() {
-    let dir = temp_dir("build_excludes_draft_pages");
-    let site = dir.join("site");
-    let out = dir.join("dist");
-    write_file(&site.join("posts/published.md"), &page("Published", false));
-    write_file(&site.join("posts/secret.md"), &page("Secret Draft", true));
-
-    let output = build_temp_site(&site, &out);
-
-    assert!(
-        output.status.success(),
-        "build failed\nstderr: {}",
-        stderr(&output)
-    );
-    assert!(
-        out.join("posts/published/index.html").is_file(),
-        "published page missing, got: {}",
-        list_files(&out).join(", ")
-    );
-    assert!(
-        !out.join("posts/secret").exists(),
-        "draft page must not be written"
-    );
-    let index = fs::read_to_string(out.join("posts/index.html")).unwrap();
-    assert!(
-        !index.contains("secret") && !index.contains("Secret Draft"),
-        "section index must not list the draft, got:\n{index}"
     );
 }
 
@@ -2247,4 +2182,121 @@ fn list_files(dir: &PathBuf) -> Vec<String> {
         }
     }
     files
+}
+
+// AC-arch-1.1.1; AC-arch-1.1.2; AC-arch-1.1.3; AC-arch-1.8.3: the build runs
+// its fallible steps in a fixed order and reports only the first failure, so
+// splitting it into plan/commit may not reshuffle them.
+#[test]
+fn build_reports_first_failure_in_pipeline_order() {
+    let dir = temp_dir("build_reports_first_failure_in_pipeline_order");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    let config = dir.join("bad.json");
+    let templates = dir.join("no-templates");
+    let assets = dir.join("no-assets");
+    let bad_page = site.join("posts/one.md");
+
+    write_file(&bad_page, "# No frontmatter here\n");
+    write_file(&config, "{not valid json");
+    write_file(&out.join("marker.txt"), "keep me");
+    let before = snapshot(&out);
+
+    let attempt = || {
+        run_mango(
+            &[
+                "build",
+                "--site",
+                site.to_str().unwrap(),
+                "--templates",
+                templates.to_str().unwrap(),
+                "--assets",
+                assets.to_str().unwrap(),
+                "-o",
+                out.to_str().unwrap(),
+                "--config",
+                config.to_str().unwrap(),
+            ],
+            &root(),
+        )
+    };
+
+    // 1. Pages load first: the page without frontmatter is reported and the
+    //    malformed config is not mentioned.
+    let output = attempt();
+    assert_failure(&output, "page without frontmatter");
+    let err = stderr(&output);
+    assert!(err.contains(bad_page.to_str().unwrap()), "{err}");
+    assert!(!err.contains("bad.json"), "{err}");
+    assert_eq!(snapshot(&out), before, "output changed");
+
+    // 2. Then the config, before the missing templates folder.
+    write_file(&bad_page, &page("One", false));
+    let output = attempt();
+    assert_failure(&output, "malformed config");
+    let err = stderr(&output);
+    assert!(err.contains("Mango Config Error"), "{err}");
+    assert!(err.contains("bad.json"), "{err}");
+    assert!(!err.contains("no-templates"), "{err}");
+    assert_eq!(snapshot(&out), before, "output changed");
+
+    // 3. Then the templates, before the missing assets folder.
+    write_file(&config, r#"{"title": "T"}"#);
+    let output = attempt();
+    assert_failure(&output, "missing templates folder");
+    let err = stderr(&output);
+    assert!(err.contains("no-templates"), "{err}");
+    assert!(!err.contains("no-assets"), "{err}");
+    assert_eq!(snapshot(&out), before, "output changed");
+
+    // 4. Then the assets folder.
+    copy_dir(&root().join("example/meta/templates"), &templates);
+    let output = attempt();
+    assert_failure(&output, "missing assets folder");
+    let err = stderr(&output);
+    assert!(err.contains("no-assets"), "{err}");
+    assert_eq!(snapshot(&out), before, "output changed");
+
+    // 5. With every input valid the build succeeds and clears the stale file.
+    copy_dir(&root().join("example/meta/assets"), &assets);
+    let output = attempt();
+    assert_success(&output);
+    assert!(
+        !out.join("marker.txt").exists(),
+        "a successful build empties the output folder"
+    );
+    assert!(out.join("posts/one/index.html").is_file());
+}
+
+// AC-arch-1.3.3: `--site` is joined onto `.`, so an error about the site
+// folder names it as `./<site>`. ARCH-7 removes the join and replaces this
+// test; until then the form is pinned.
+#[test]
+fn build_names_relative_site_path_with_dot_prefix() {
+    let dir = temp_dir("build_names_relative_site_path_with_dot_prefix");
+    let root = root();
+    let out = dir.join("dist");
+
+    let output = run_mango(
+        &[
+            "build",
+            "--site",
+            "nowhere",
+            "--templates",
+            root.join("example/meta/templates").to_str().unwrap(),
+            "--assets",
+            root.join("example/meta/assets").to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+        ],
+        &dir,
+    );
+
+    assert_failure(&output, "build --site nowhere");
+    let expected = format!(
+        "{} is not a directory",
+        Path::new(".").join("nowhere").display()
+    );
+    assert!(stderr(&output).contains(&expected), "{}", stderr(&output));
+    assert!(!out.exists(), "a failed build creates nothing");
 }

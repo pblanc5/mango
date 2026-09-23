@@ -28,7 +28,7 @@ pub enum MangoError {
 
 impl MangoError {
     /// I/O error tied to the file or directory it happened on.
-    pub fn io_at(path: impl Into<PathBuf>, source: std::io::Error) -> Self {
+    pub(crate) fn io_at(path: impl Into<PathBuf>, source: std::io::Error) -> Self {
         MangoError::IoPath {
             path: path.into(),
             source,

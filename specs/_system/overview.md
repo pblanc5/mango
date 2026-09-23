@@ -10,7 +10,7 @@ mango is a Rust command-line tool that builds static websites (`Cargo.toml:6`, `
 - `feed.xml` and `sitemap.xml`, only when `base_url` is set
 - a copy of the assets folder
 
-The build loads, checks and renders everything in memory first. It only empties the output folder once nothing can fail on bad input (`src/cli.rs:120-121`, `CLAUDE.md:49`). There is no library crate: `src/main.rs` is the only target, and there is no `lib.rs`.
+The build loads, checks and renders everything in memory first. It only empties the output folder once nothing can fail on bad input (`src/cli.rs:120-121`, `CLAUDE.md:49`). The crate has two targets: a library (`src/lib.rs`), which holds the pipeline and exposes it as `plan` (write-free) and `commit` (the only writer), and a binary (`src/main.rs` plus the binary-only `src/cli.rs`), which parses arguments and calls it.
 
 ## Components
 Line counts include each file's `#[cfg(test)]` module. "Unit tests" is the number of `#[test]` functions in that file (counted with a search).

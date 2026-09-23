@@ -10,7 +10,7 @@ Statuses: `open`, `done`, `dropped`. Sizes: **S** (one module, under a day), **M
 |---|---|---|---|---|---|---|
 | [FEAT-1](#feat-1) | Dev server (`run`) | medium | L | `/spec-feature` | ARCH-1, a dependency approval | open |
 | [FEAT-2](#feat-2) | `publish`: dropped, never implemented | — | — | — | — | dropped |
-| [ARCH-1](#arch-1) | Split the build into plan and commit; add `lib.rs` | high | L | `/spec-feature` | — | open |
+| [ARCH-1](#arch-1) | Split the build into plan and commit; add `lib.rs` | high | L | `/spec-feature` | — | done |
 | [ARCH-2](#arch-2) | One output model instead of three | high | L | `/spec-feature` | ARCH-1, ARCH-3 | open |
 | [ARCH-3](#arch-3) | `Slug` and `Tag` newtypes | high | M | `/spec-feature` | — | open |
 | [ARCH-4](#arch-4) | Structured error variants instead of `General(String)` | medium | M | `/ship-feature` | — | open |
@@ -38,7 +38,7 @@ Recommended order: ARCH-1 → ARCH-3 → ARCH-2, then ARCH-4 to ARCH-7 in any or
 Source: architecture review of 2026-09-14 (commit `8f2eec7`). The review found the core design sound (stage-per-module layout, the `RenderItem` seam, view models separate from `Page`, a single error type); these items address where that design has been stretched rather than extended.
 
 ### ARCH-1
-**Split the build into plan and commit; add `lib.rs`** · high · L · `/spec-feature` · open
+**Split the build into plan and commit; add `lib.rs`** · high · L · `/spec-feature` · done
 
 **Problem.** `cli::build` (`src/cli.rs`) parses paths, loads, indexes, generates, checks collisions, renders, checks safety, cleans and writes in one function of about 80 lines. The project's most important guarantee, that nothing touches the output folder until everything has succeeded, is enforced only by statement order and a comment; a new line in the wrong place silently breaks it. There is no library crate, so the pipeline can only be tested by spawning the binary, which is why `tests/build.rs` is about 1,900 lines.
 
@@ -57,6 +57,8 @@ pub fn commit(plan: BuildPlan, dist: &Path) -> Result<(), MangoError>; // safety
 - All existing tests pass; CLAUDE.md's pipeline description is updated.
 
 **Also enables.** The future `run` dev server can call `plan` on every change; parallel rendering becomes a local change.
+
+**Landed.** The crate now builds a library (`src/lib.rs`) alongside the binary. Every module under `lib.rs` is private and the public surface is exactly seven re-exports — `plan`, `commit`, `clean`, `BuildOptions`, `BuildPlan`, `PlannedOutput`, `MangoError` — so a `pub` item nothing uses still trips the dead-code lint. `src/build/pipeline.rs` holds the seam: `plan(&BuildOptions)` loads, checks and renders everything while writing nothing, and `commit(BuildPlan)` is the only function that empties or writes the output folder. `BuildPlan`'s fields are private and `plan` is its only constructor, so "nothing is touched until everything has succeeded" is structural rather than positional; the plan is bound to the folder it was planned against (`commit` takes no destination, contrary to the sketch above) and `BuildPlan::outputs()` enumerates every file and asset copy for inspection. `ensure_safe_to_clean`, `clean_contents` and `mango clean` moved to `src/build/clean.rs` with their seven unit tests; `src/cli.rs` is binary-only and now contains nothing but clap definitions and dispatch. New `tests/plan.rs` has 13 in-process tests covering collisions (exact and file-vs-folder), failure precedence, the write-free guarantee, plan enumeration and determinism, commit's output and safety refusal, section ordering, `recent_count`, draft exclusion, draft validation and `clean`; `home_recent_respects_recent_count_and_skips_undated` and `build_excludes_draft_pages` moved there from `tests/build.rs`, which gained two safety-net tests (pipeline-order failure precedence and the `./<site>` error form) and is otherwise unchanged. No message, flag, output byte or exit code changed, and no dependency was added.
 
 ### ARCH-2
 **One output model instead of three** · high · L · `/spec-feature` · depends on ARCH-1, ARCH-3 · open
@@ -195,7 +197,7 @@ The fourth decision — what happens to the existing numeric tags — is a job r
 
 **Problem.** The 181 `// AC-<group>.<n>` comments in `src/` and `tests/` now resolve (SPEC-2), but only through a lookup: the number alone is ambiguous for every group below `AC-10`. Rewriting each to the spec-scoped `AC-<spec-id>.<n>` form the constitution requires would make them self-identifying.
 
-**Why it waits for ARCH-1.** ARCH-1 splits the build into `plan`/`commit`, adds `lib.rs`, and moves pipeline tests in-process out of `tests/build.rs`. That will move, rewrite and delete a significant share of the 181 tag sites. Doing this first means doing part of it twice.
+**Why it waited for ARCH-1.** ARCH-1 (done) split the build into `plan`/`commit`, added `lib.rs`, and moved pipeline tests in-process out of `tests/build.rs`, moving a share of the 181 tag sites — the seven `src/cli.rs` unit tests now live in `src/build/clean.rs`, and two E2E tests in `tests/plan.rs`. Their tags travelled with them unchanged, so this rewrite can now go ahead against a settled layout.
 
 **Method.** For each tag, the test's name resolves it against the `## Verified by` tables in `specs/_system/legacy-criteria/`. Where a test has since been renamed, `git log -S'<the tag line>' -- <file>` gives the commit that introduced it and its date places it in one run. Both are mechanical; lines carrying several IDs need care.
 

@@ -8,6 +8,7 @@ use crate::{build::generate::assets::AssetFile, error::MangoError, render::templ
 
 /// A fully rendered output file, held in memory until it is written.
 /// `html` may also hold non-HTML contents (the feed and sitemap XML).
+#[derive(Debug)]
 pub struct RenderedFile {
     pub path: PathBuf,
     pub html: String,

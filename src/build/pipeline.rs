@@ -1,0 +1,182 @@
+use std::path::{Path, PathBuf};
+
+use crate::{
+    build::{
+        clean::{clean_contents, current_dir, ensure_safe_to_clean},
+        generate::{
+            assets::{self, AssetFile},
+            content, feed, home, section, sitemap, tag,
+        },
+        index,
+        output::{self, RenderedFile},
+    },
+    config,
+    content::loader,
+    error::MangoError,
+    render::template,
+};
+
+/// The inputs a build needs: the same paths `mango build` accepts. Every path
+/// is used exactly as given except `site`, which `plan` joins onto `.`.
+#[derive(Debug)]
+pub struct BuildOptions {
+    pub site: PathBuf,
+    pub templates: PathBuf,
+    pub assets: PathBuf,
+    pub output: PathBuf,
+    /// `None` reads `mango.json` from the current directory, and falls back
+    /// to the defaults when that file does not exist.
+    pub config: Option<PathBuf>,
+}
+
+/// A complete, fully rendered build, held in memory and bound to the one
+/// output folder it was planned against. Only [`plan`] can produce one and
+/// only [`commit`] can write one out.
+#[derive(Debug)]
+pub struct BuildPlan {
+    output_dir: PathBuf,
+    /// Input paths the output folder may neither be nor contain.
+    protected: Vec<PathBuf>,
+    /// Rendered and generated files, in the order they are written.
+    files: Vec<RenderedFile>,
+    assets: Vec<AssetFile>,
+}
+
+/// One thing a [`BuildPlan`] would put in the output folder.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PlannedOutput<'a> {
+    /// A rendered or generated file: path relative to the output folder, and
+    /// the exact contents that will be written.
+    File { path: &'a Path, contents: &'a str },
+    /// An asset copy: destination relative to the output folder, and the
+    /// source file it is copied from.
+    Copy { path: &'a Path, source: &'a Path },
+}
+
+impl BuildPlan {
+    /// The output folder this plan was planned against and the only folder it
+    /// can be committed into.
+    pub fn output_dir(&self) -> &Path {
+        &self.output_dir
+    }
+
+    /// Every output this plan would produce: files first (pages, section
+    /// indexes, home, tag index and tag pages, then the feed and sitemap),
+    /// then asset copies — the order [`commit`] writes them in.
+    pub fn outputs(&self) -> impl Iterator<Item = PlannedOutput<'_>> {
+        let files = self.files.iter().map(|file| PlannedOutput::File {
+            path: self.relative(&file.path),
+            contents: file.html.as_str(),
+        });
+        let copies = self.assets.iter().map(|asset| PlannedOutput::Copy {
+            path: self.relative(&asset.dest),
+            source: asset.source.as_path(),
+        });
+        files.chain(copies)
+    }
+
+    /// Paths are stored absolute-to-`output_dir` because collision messages,
+    /// `output::write` and `assets::copy` all use the full path. Every one of
+    /// them is built by joining onto `output_dir` inside `plan`, the only
+    /// constructor, so `strip_prefix` cannot fail here.
+    fn relative<'a>(&self, path: &'a Path) -> &'a Path {
+        path.strip_prefix(&self.output_dir).unwrap_or(path)
+    }
+}
+
+/// Loads, checks and renders everything, writing nothing. Every error a build
+/// can raise on bad input (content, file names, tags, dates, config,
+/// templates, assets, collisions, rendering) happens here, in this order, so
+/// a plan that exists is a build that cannot fail on its inputs any more.
+pub fn plan(opts: &BuildOptions) -> Result<BuildPlan, MangoError> {
+    // The `.` join is preserved from the pre-split `cli::build`, so an error
+    // about the site folder still names it `./<site>`. ARCH-7 removes it.
+    let site_path = Path::new(".").join(&opts.site);
+    let templates = opts.templates.as_path();
+    let assets = opts.assets.as_path();
+    let dist = opts.output.as_path();
+    let config_explicit = opts.config.is_some();
+    let config_path = opts
+        .config
+        .as_deref()
+        .unwrap_or_else(|| Path::new(config::DEFAULT_CONFIG_PATH));
+
+    let pages = loader::load(site_path.as_path())?;
+    let config = config::load(config_path, config_explicit)?;
+    let tera = template::load_templates(templates)?;
+
+    let asset_dest = match assets.file_name() {
+        Some(name) => dist.join(name),
+        None => {
+            let msg = format!(
+                "the assets path '{}' has no directory name to copy into the output",
+                assets.display()
+            );
+            return Err(MangoError::General(msg));
+        }
+    };
+    // Listed now, copied by `commit`: a missing assets folder or an asset
+    // that clashes with a page must fail before anything is cleaned.
+    let asset_files = assets::plan(assets, &asset_dest)?;
+
+    let page_items = content::build(&pages, &config)?;
+    let si = index::section::build_section_index(&pages);
+    // The home item reads the index, so build it before `section::build`
+    // consumes it.
+    let home_items = [home::build(&pages, &si, &config)];
+    let section_items = section::build(si, &config);
+    let tag_items = tag::build(index::tag::build_tag_index(&pages), &config);
+
+    // Non-template files. Both need `base_url` and are skipped without it;
+    // the sitemap lists every HTML render item.
+    let html_items = || {
+        page_items
+            .iter()
+            .chain(section_items.iter())
+            .chain(home_items.iter())
+            .chain(tag_items.iter())
+    };
+    let generated: Vec<output::GeneratedFile> = [
+        feed::build(&pages, &config),
+        sitemap::build(html_items(), &config),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    output::check_collisions(dist, html_items(), &generated, &asset_files)?;
+
+    let mut files = output::render(&tera, dist, &page_items)?;
+    files.extend(output::render(&tera, dist, &section_items)?);
+    files.extend(output::render(&tera, dist, &home_items)?);
+    files.extend(output::render(&tera, dist, &tag_items)?);
+    files.extend(output::render_generated(dist, &generated));
+
+    Ok(BuildPlan {
+        output_dir: dist.to_path_buf(),
+        protected: vec![
+            site_path,
+            templates.to_path_buf(),
+            assets.to_path_buf(),
+            config_path.to_path_buf(),
+        ],
+        files,
+        assets: asset_files,
+    })
+}
+
+/// Writes a plan out. This is the only operation in the crate that empties or
+/// writes into a build's output folder, and it takes nothing but a plan, so
+/// the "nothing is touched until everything has succeeded" guarantee is a
+/// property of the seam rather than of statement order.
+pub fn commit(plan: BuildPlan) -> Result<(), MangoError> {
+    let cwd = current_dir()?;
+    let protected: Vec<&Path> = plan.protected.iter().map(PathBuf::as_path).collect();
+    ensure_safe_to_clean(&plan.output_dir, &cwd, &protected)?;
+    clean_contents(&plan.output_dir)?;
+
+    output::write(&plan.files)?;
+    assets::copy(&plan.assets)?;
+
+    Ok(())
+}
