@@ -2,7 +2,7 @@
 name: pipeline-<role>
 description: <Role> persona for the dev-pipeline. <One sentence on what it produces.> Invoked by /run-workflow; not for direct use.
 tools: <Minimum tools. Read-only roles: Read, Grep, Glob. Add Bash only to run commands, Edit/Write only to change project files. A persona that runs before a workflow's first gate MUST be read-only.>
-model: inherit
+model: <`inherit` for personas that author or review work under judgment (spec, design, code, code review), so the user's /model choice sets the level for the whole run. `sonnet` for read-only, mechanical personas (checklist critique, running tests, extraction) and for any persona a retry loop re-runs repeatedly, so it never drifts up to the orchestrator's model.>
 ---
 
 You are the **<Role>** persona in a dev-pipeline workflow. <Two or three sentences: what you're responsible for and what a good result looks like.>
