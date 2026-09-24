@@ -1,14 +1,15 @@
 use std::collections::BTreeMap;
 
 use crate::{
+    build::output::Output,
     config::SiteConfig,
     content::{summary::PageSummary, tag::Tag},
-    render::template::{self, RenderItem, TagIndexEntry},
+    render::template::{self, TagIndexEntry},
 };
 
-/// The tag index item first (always, even with no tags, so `/tags/` is
-/// reserved on every site), then one tag page item per tag in name order.
-pub fn build(index: BTreeMap<Tag, Vec<PageSummary>>, config: &SiteConfig) -> Vec<RenderItem> {
+/// The tag index output first (always, even with no tags, so `/tags/` is
+/// reserved on every site), then one tag page output per tag in name order.
+pub fn build(index: BTreeMap<Tag, Vec<PageSummary>>, config: &SiteConfig) -> Vec<Output> {
     let entries = index
         .iter()
         .map(|(name, pages)| TagIndexEntry::new(name.clone(), pages.len()))
@@ -27,11 +28,10 @@ pub fn build(index: BTreeMap<Tag, Vec<PageSummary>>, config: &SiteConfig) -> Vec
 mod tests {
     use super::*;
     use crate::{
-        build::index::tag::build_tag_index,
+        build::{index::tag::build_tag_index, output::OutputKind},
         content::{
             frontmatter::MangoFrontmatter,
             page::{Page, PageType},
-            slug::Slug,
         },
     };
     use std::path::Path;
@@ -64,21 +64,23 @@ mod tests {
         ];
 
         let items = build(build_tag_index(&pages), &SiteConfig::default());
-        let slugs: Vec<_> = items.iter().map(|i| i.slug.to_string()).collect();
-        assert_eq!(slugs, ["tags", "tags/blog", "tags/rust"]);
-        let sources: Vec<_> = items.iter().map(|i| i.source.as_str()).collect();
-        assert_eq!(sources, ["tag index", "tag page 'blog'", "tag page 'rust'"]);
+        let kinds: Vec<_> = items.iter().map(|i| &i.kind).collect();
+        let tag = |name: &str| OutputKind::Tag(Tag::parse(name.into()).unwrap());
+        assert_eq!(kinds, [&OutputKind::TagIndex, &tag("blog"), &tag("rust")]);
+        let labels: Vec<_> = items.iter().map(|i| i.kind.to_string()).collect();
+        assert_eq!(labels, ["tag index", "tag page 'blog'", "tag page 'rust'"]);
+        assert_eq!(items[0].template_name(), "tags.html");
 
-        let tags = items[0].context.get("tags").unwrap();
+        let tags = items[0].context().get("tags").unwrap();
         assert_eq!(tags[0]["name"], "blog");
         assert_eq!(tags[0]["page_count"], 2);
         assert_eq!(tags[1]["name"], "rust");
         assert_eq!(tags[1]["url"], "/tags/rust/");
         assert_eq!(tags[1]["page_count"], 1);
 
-        let blog = items[1].context.get("tag").unwrap();
+        let blog = items[1].context().get("tag").unwrap();
         assert_eq!(blog["pages"].as_array().unwrap().len(), 2);
-        assert!(items.iter().all(|i| i.context.get("config").is_some()));
+        assert!(items.iter().all(|i| i.context().get("config").is_some()));
     }
 
     // AC-2.4 (batch 4)
@@ -89,10 +91,10 @@ mod tests {
             &SiteConfig::default(),
         );
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].slug, Slug::tag_index());
-        assert_eq!(items[0].template, "tags.html");
+        assert_eq!(items[0].kind, OutputKind::TagIndex);
+        assert_eq!(items[0].template_name(), "tags.html");
         assert_eq!(
-            items[0].context.get("tags").unwrap(),
+            items[0].context().get("tags").unwrap(),
             &serde_json::json!([])
         );
     }

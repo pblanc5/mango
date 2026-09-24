@@ -3,12 +3,9 @@ use std::path::{Path, PathBuf};
 use crate::{
     build::{
         clean::{clean_contents, current_dir, ensure_safe_to_clean},
-        generate::{
-            assets::{self, AssetFile},
-            content, feed, home, section, sitemap, tag,
-        },
+        generate::{assets, content, feed, home, section, sitemap, tag},
         index,
-        output::{self, RenderedFile},
+        output::{self, Contents, RenderedOutput},
     },
     config,
     content::loader,
@@ -37,9 +34,9 @@ pub struct BuildPlan {
     output_dir: PathBuf,
     /// Input paths the output folder may neither be nor contain.
     protected: Vec<PathBuf>,
-    /// Rendered and generated files, in the order they are written.
-    files: Vec<RenderedFile>,
-    assets: Vec<AssetFile>,
+    /// Every output, rendered, in the order it is written: files first, then
+    /// asset copies (the planned list puts assets last).
+    outputs: Vec<RenderedOutput>,
 }
 
 /// One thing a [`BuildPlan`] would put in the output folder.
@@ -64,21 +61,25 @@ impl BuildPlan {
     /// indexes, home, tag index and tag pages, then the feed and sitemap),
     /// then asset copies — the order [`commit`] writes them in.
     pub fn outputs(&self) -> impl Iterator<Item = PlannedOutput<'_>> {
-        let files = self.files.iter().map(|file| PlannedOutput::File {
-            path: self.relative(&file.path),
-            contents: file.html.as_str(),
-        });
-        let copies = self.assets.iter().map(|asset| PlannedOutput::Copy {
-            path: self.relative(&asset.dest),
-            source: asset.source.as_path(),
-        });
-        files.chain(copies)
+        self.outputs.iter().map(|output| {
+            let path = self.relative(&output.path);
+            match &output.contents {
+                Contents::Text(contents) => PlannedOutput::File {
+                    path,
+                    contents: contents.as_str(),
+                },
+                Contents::Copy(source) => PlannedOutput::Copy {
+                    path,
+                    source: source.as_path(),
+                },
+            }
+        })
     }
 
-    /// Paths are stored absolute-to-`output_dir` because collision messages,
-    /// `output::write` and `assets::copy` all use the full path. Every one of
-    /// them is built by joining onto `output_dir` inside `plan`, the only
-    /// constructor, so `strip_prefix` cannot fail here.
+    /// Paths are stored absolute-to-`output_dir` because collision messages
+    /// and `output::write` use the full path. Every one of them is built by
+    /// joining onto `output_dir` inside `plan`, the only constructor, so
+    /// `strip_prefix` cannot fail here.
     fn relative<'a>(&self, path: &'a Path) -> &'a Path {
         path.strip_prefix(&self.output_dir).unwrap_or(path)
     }
@@ -105,8 +106,9 @@ pub fn plan(opts: &BuildOptions) -> Result<BuildPlan, MangoError> {
     let config = config::load(config_path, config_explicit)?;
     let tera = template::load_templates(templates)?;
 
-    let asset_dest = match assets.file_name() {
-        Some(name) => dist.join(name),
+    // The folder under the output folder that assets are copied into.
+    let asset_folder = match assets.file_name() {
+        Some(name) => PathBuf::from(name),
         None => {
             let msg = format!(
                 "the assets path '{}' has no directory name to copy into the output",
@@ -117,40 +119,28 @@ pub fn plan(opts: &BuildOptions) -> Result<BuildPlan, MangoError> {
     };
     // Listed now, copied by `commit`: a missing assets folder or an asset
     // that clashes with a page must fail before anything is cleaned.
-    let asset_files = assets::plan(assets, &asset_dest)?;
+    let asset_outputs = assets::plan(assets, &asset_folder)?;
 
-    let page_items = content::build(&pages, &config)?;
+    // One list, in the order outputs are checked, rendered, enumerated and
+    // written: pages, sections, home, tag index and tag pages, feed, sitemap,
+    // then asset copies (last, so `commit` writes every file before copying).
+    let mut outputs = content::build(&pages, &config)?;
     let si = index::section::build_section_index(&pages);
-    // The home item reads the index, so build it before `section::build`
+    // The home output reads the index, so build it before `section::build`
     // consumes it.
-    let home_items = [home::build(&pages, &si, &config)];
-    let section_items = section::build(si, &config);
-    let tag_items = tag::build(index::tag::build_tag_index(&pages), &config);
+    let home_output = home::build(&pages, &si, &config);
+    outputs.extend(section::build(si, &config));
+    outputs.push(home_output);
+    outputs.extend(tag::build(index::tag::build_tag_index(&pages), &config));
+    // The feed and sitemap need `base_url` and are skipped without it. The
+    // sitemap picks the HTML outputs out of the list by kind.
+    outputs.extend(feed::build(&pages, &config));
+    let sitemap = sitemap::build(&outputs, &config);
+    outputs.extend(sitemap);
+    outputs.extend(asset_outputs);
 
-    // Non-template files. Both need `base_url` and are skipped without it;
-    // the sitemap lists every HTML render item.
-    let html_items = || {
-        page_items
-            .iter()
-            .chain(section_items.iter())
-            .chain(home_items.iter())
-            .chain(tag_items.iter())
-    };
-    let generated: Vec<output::GeneratedFile> = [
-        feed::build(&pages, &config),
-        sitemap::build(html_items(), &config),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-
-    output::check_collisions(dist, html_items(), &generated, &asset_files)?;
-
-    let mut files = output::render(&tera, dist, &page_items)?;
-    files.extend(output::render(&tera, dist, &section_items)?);
-    files.extend(output::render(&tera, dist, &home_items)?);
-    files.extend(output::render(&tera, dist, &tag_items)?);
-    files.extend(output::render_generated(dist, &generated));
+    output::check_collisions(dist, &outputs)?;
+    let outputs = output::render(&tera, dist, outputs)?;
 
     Ok(BuildPlan {
         output_dir: dist.to_path_buf(),
@@ -160,8 +150,7 @@ pub fn plan(opts: &BuildOptions) -> Result<BuildPlan, MangoError> {
             assets.to_path_buf(),
             config_path.to_path_buf(),
         ],
-        files,
-        assets: asset_files,
+        outputs,
     })
 }
 
@@ -175,8 +164,7 @@ pub fn commit(plan: BuildPlan) -> Result<(), MangoError> {
     ensure_safe_to_clean(&plan.output_dir, &cwd, &protected)?;
     clean_contents(&plan.output_dir)?;
 
-    output::write(&plan.files)?;
-    assets::copy(&plan.assets)?;
+    output::write(&plan.outputs)?;
 
     Ok(())
 }

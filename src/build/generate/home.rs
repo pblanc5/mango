@@ -1,8 +1,11 @@
 use crate::{
-    build::index::section::{SectionIndex, compare_summaries},
+    build::{
+        index::section::{SectionIndex, compare_summaries},
+        output::Output,
+    },
     config::SiteConfig,
     content::{page::Page, summary::PageSummary},
-    render::template::{self, HomeSection, RenderItem},
+    render::template::{self, HomeSection},
 };
 
 /// The site-wide "recent" list shared by `home.recent` and the RSS feed: up
@@ -18,9 +21,9 @@ pub fn recent_pages(pages: &[Page], recent_count: usize) -> Vec<&Page> {
     recent.into_iter().map(|(_, page)| page).collect()
 }
 
-/// The home page item (`dist/index.html`): up to `recent_count` dated pages
+/// The home page output (`dist/index.html`): up to `recent_count` dated pages
 /// from the whole site, newest first, and the top-level sections by slug.
-pub fn build(pages: &[Page], si: &SectionIndex, config: &SiteConfig) -> RenderItem {
+pub fn build(pages: &[Page], si: &SectionIndex, config: &SiteConfig) -> Output {
     let recent = recent_pages(pages, config.recent_count)
         .into_iter()
         .map(PageSummary::from)
@@ -40,8 +43,8 @@ pub fn build(pages: &[Page], si: &SectionIndex, config: &SiteConfig) -> RenderIt
 mod tests {
     use super::*;
     use crate::{
-        build::index::section::build_section_index,
-        content::{frontmatter::MangoFrontmatter, page::PageType, slug::Slug},
+        build::{index::section::build_section_index, output::OutputKind},
+        content::{frontmatter::MangoFrontmatter, page::PageType},
     };
     use std::path::Path;
 
@@ -64,12 +67,12 @@ mod tests {
         .unwrap()
     }
 
-    fn home_for(pages: &[Page], config: &SiteConfig) -> RenderItem {
+    fn home_for(pages: &[Page], config: &SiteConfig) -> Output {
         build(pages, &build_section_index(pages), config)
     }
 
-    fn recent_slugs(item: &RenderItem) -> Vec<String> {
-        item.context.get("home").unwrap()["recent"]
+    fn recent_slugs(item: &Output) -> Vec<String> {
+        item.context().get("home").unwrap()["recent"]
             .as_array()
             .unwrap()
             .iter()
@@ -81,10 +84,10 @@ mod tests {
     #[test]
     fn home_item_has_empty_slug_and_source() {
         let item = home_for(&[], &SiteConfig::default());
-        assert_eq!(item.slug, Slug::home());
-        assert_eq!(item.source, "home page");
-        assert_eq!(item.template, "home.html");
-        assert!(item.context.get("config").is_some());
+        assert_eq!(item.kind, OutputKind::Home);
+        assert_eq!(item.kind.to_string(), "home page");
+        assert_eq!(item.template_name(), "home.html");
+        assert!(item.context().get("config").is_some());
     }
 
     // AC-2.2, AC-2.3
@@ -105,7 +108,7 @@ mod tests {
             ["projects/new", "about", "posts/a", "posts/b", "posts/old"]
         );
 
-        let first = &all.context.get("home").unwrap()["recent"][0];
+        let first = &all.context().get("home").unwrap()["recent"][0];
         assert_eq!(first["title"], "New");
         assert_eq!(first["date"], "2026-02-07");
         assert_eq!(first["url"], "/projects/new/");
@@ -163,7 +166,7 @@ mod tests {
         ];
 
         let item = home_for(&pages, &SiteConfig::default());
-        let sections = item.context.get("home").unwrap()["sections"]
+        let sections = item.context().get("home").unwrap()["sections"]
             .as_array()
             .unwrap()
             .clone();

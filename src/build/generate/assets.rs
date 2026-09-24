@@ -3,22 +3,17 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::error::MangoError;
+use crate::{
+    build::output::{Body, Output, OutputKind},
+    error::MangoError,
+};
 
-/// One asset file to copy into the output.
-#[derive(Debug)]
-pub struct AssetFile {
-    pub source: PathBuf,
-    /// Final path under the output folder.
-    pub dest: PathBuf,
-    /// Human-readable origin, used in collision errors: `asset '<relative path>'`.
-    pub label: String,
-}
-
-/// Lists every file under `assets_source` (recursively, sorted by
-/// destination) without copying anything, so a missing assets folder and
-/// output conflicts are caught before the output folder is cleaned.
-pub fn plan(assets_source: &Path, asset_dest: &Path) -> Result<Vec<AssetFile>, MangoError> {
+/// Lists every file under `assets_source` (recursively, sorted by path, so by
+/// destination) as one asset-copy output each, copied into the `folder`
+/// folder under the output folder. Nothing is copied here: `commit` does that,
+/// so a missing assets folder and output conflicts are caught before the
+/// output folder is cleaned.
+pub fn plan(assets_source: &Path, folder: &Path) -> Result<Vec<Output>, MangoError> {
     if !assets_source.is_dir() {
         let msg = format!(
             "the path '{}' is not a directory",
@@ -28,17 +23,22 @@ pub fn plan(assets_source: &Path, asset_dest: &Path) -> Result<Vec<AssetFile>, M
     }
 
     let mut files = Vec::new();
-    collect(assets_source, assets_source, asset_dest, &mut files)?;
-    files.sort_by(|a, b| a.dest.cmp(&b.dest));
-    Ok(files)
+    collect(assets_source, assets_source, &mut files)?;
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(files
+        .into_iter()
+        .map(|(rel, source)| Output {
+            kind: OutputKind::Asset {
+                folder: folder.to_path_buf(),
+                rel,
+            },
+            body: Body::Copy(source),
+        })
+        .collect())
 }
 
-fn collect(
-    root: &Path,
-    dir: &Path,
-    asset_dest: &Path,
-    files: &mut Vec<AssetFile>,
-) -> Result<(), MangoError> {
+/// Gathers `(path relative to root, source path)` for every file under `dir`.
+fn collect(root: &Path, dir: &Path, files: &mut Vec<(PathBuf, PathBuf)>) -> Result<(), MangoError> {
     for child in fs::read_dir(dir).map_err(|e| MangoError::io_at(dir, e))? {
         let child = child.map_err(|e| MangoError::io_at(dir, e))?;
         let source = child.path();
@@ -55,42 +55,25 @@ fn collect(
                 ))
             })?
             .to_path_buf();
-        let rel_label = rel.to_string_lossy().replace('\\', "/");
 
         // `file_type()` above does not follow symlinks; `metadata` does, so a
-        // link to a folder is recognised here instead of blowing up in `copy`
-        // after the output folder was cleaned. A dangling link or a symlink
-        // loop fails here too, for the same reason.
+        // link to a folder is recognised here instead of blowing up in the
+        // commit-time copy after the output folder was cleaned. A dangling
+        // link or a symlink loop fails here too, for the same reason.
         let target = fs::metadata(&source).map_err(|e| MangoError::io_at(&source, e))?;
         if target.is_dir() {
             if file_type.is_symlink() {
                 return Err(MangoError::General(format!(
                     "asset '{}' is a symlink to a directory ('{}'): symlinked folders are not copied; replace it with a real folder",
-                    rel_label,
+                    rel.to_string_lossy().replace('\\', "/"),
                     source.display()
                 )));
             }
-            collect(root, &source, asset_dest, files)?;
+            collect(root, &source, files)?;
             continue;
         }
 
-        files.push(AssetFile {
-            dest: asset_dest.join(&rel),
-            label: format!("asset '{rel_label}'"),
-            source,
-        });
-    }
-
-    Ok(())
-}
-
-/// Copies planned assets, creating parent folders. Any failure fails the build.
-pub fn copy(files: &[AssetFile]) -> Result<(), MangoError> {
-    for file in files {
-        if let Some(parent) = file.dest.parent() {
-            fs::create_dir_all(parent).map_err(|e| MangoError::io_at(parent, e))?;
-        }
-        fs::copy(&file.source, &file.dest).map_err(|e| MangoError::io_at(&file.source, e))?;
+        files.push((rel, source));
     }
 
     Ok(())
@@ -99,6 +82,13 @@ pub fn copy(files: &[AssetFile]) -> Result<(), MangoError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::build::output;
+    use tera::Tera;
+
+    /// Renders and writes planned assets under `dir`, the way `commit` does.
+    fn copy_into(dir: &Path, outputs: Vec<Output>) -> Result<(), MangoError> {
+        output::write(&output::render(&Tera::default(), dir, outputs)?)
+    }
 
     fn fixture_dir(test_name: &str) -> PathBuf {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -132,7 +122,7 @@ mod tests {
             write_file(&src.join(f), f);
         }
 
-        copy(&plan(&src, &dest).unwrap()).unwrap();
+        copy_into(&dir, plan(&src, Path::new("dest")).unwrap()).unwrap();
 
         for f in files {
             let copied = dest.join(f);
@@ -151,8 +141,25 @@ mod tests {
         // Destination already exists as a directory, so the copy must fail.
         fs::create_dir_all(dest.join("style.css")).unwrap();
 
-        let err = copy(&plan(&src, &dest).unwrap()).expect_err("copy onto a directory must fail");
+        let err = copy_into(&dir, plan(&src, Path::new("dest")).unwrap())
+            .expect_err("copy onto a directory must fail");
         assert!(err.to_string().contains("style.css"), "{err}");
+    }
+
+    // AC-arch-2.5.4: a copy failure names the asset's source path, not its
+    // destination (RISK-7).
+    #[test]
+    fn copy_failure_names_the_source_path() {
+        let dir = fixture_dir("copy_failure_names_the_source_path");
+        let src = dir.join("src");
+        let dest = dir.join("dest");
+        write_file(&src.join("style.css"), "body {}");
+        fs::create_dir_all(dest.join("style.css")).unwrap();
+
+        match copy_into(&dir, plan(&src, Path::new("dest")).unwrap()) {
+            Err(MangoError::IoPath { path, .. }) => assert_eq!(path, src.join("style.css")),
+            other => panic!("expected IoPath, got {other:?}"),
+        }
     }
 
     #[test]
@@ -163,11 +170,11 @@ mod tests {
         write_file(&src.join("z.txt"), "z");
         write_file(&src.join("a/b.css"), "b");
 
-        let files = plan(&src, &dest).unwrap();
+        let files = plan(&src, Path::new("dest")).unwrap();
 
-        let labels: Vec<_> = files.iter().map(|f| f.label.as_str()).collect();
+        let labels: Vec<_> = files.iter().map(|f| f.kind.to_string()).collect();
         assert_eq!(labels, ["asset 'a/b.css'", "asset 'z.txt'"]);
-        assert_eq!(files[0].dest, dest.join("a/b.css"));
+        assert_eq!(files[0].path(&dir), dest.join("a/b.css"));
         assert!(!dest.exists(), "plan must not create the destination");
     }
 
@@ -186,7 +193,7 @@ mod tests {
             fs::create_dir_all(src.join(link).parent().unwrap()).unwrap();
             symlink(dir.join("theme"), src.join(link)).unwrap();
 
-            let err = plan(&src, &dest).expect_err("symlinked folder must be rejected");
+            let err = plan(&src, Path::new("dest")).expect_err("symlinked folder must be rejected");
 
             assert!(matches!(err, MangoError::General(_)), "{err:?}");
             let msg = err.to_string();
@@ -207,7 +214,7 @@ mod tests {
         fs::create_dir_all(&src).unwrap();
         symlink(dir.join("nowhere"), src.join("broken.css")).unwrap();
 
-        let err = plan(&src, &dir.join("dest")).expect_err("dangling symlink must fail");
+        let err = plan(&src, Path::new("dest")).expect_err("dangling symlink must fail");
         assert!(matches!(err, MangoError::IoPath { .. }), "{err:?}");
         assert!(err.to_string().contains("broken.css"), "{err}");
     }
@@ -224,7 +231,7 @@ mod tests {
         symlink(src.join("b"), src.join("a")).unwrap();
         symlink(src.join("a"), src.join("b")).unwrap();
 
-        let err = plan(&src, &dir.join("dest")).expect_err("symlink loop must fail");
+        let err = plan(&src, Path::new("dest")).expect_err("symlink loop must fail");
         assert!(matches!(err, MangoError::IoPath { .. }), "{err:?}");
         let msg = err.to_string();
         let a = src.join("a").display().to_string();
@@ -245,11 +252,11 @@ mod tests {
         write_file(&dir.join("shared/reset.css"), "* { margin: 0 }");
         symlink(dir.join("shared/reset.css"), src.join("reset.css")).unwrap();
 
-        let files = plan(&src, &dest).unwrap();
+        let files = plan(&src, Path::new("dest")).unwrap();
 
-        let labels: Vec<_> = files.iter().map(|f| f.label.as_str()).collect();
+        let labels: Vec<_> = files.iter().map(|f| f.kind.to_string()).collect();
         assert_eq!(labels, ["asset 'reset.css'"]);
-        copy(&files).unwrap();
+        copy_into(&dir, files).unwrap();
         let copied = dest.join("reset.css");
         assert!(!copied.is_symlink(), "the link target must be copied");
         assert_eq!(fs::read_to_string(copied).unwrap(), "* { margin: 0 }");
@@ -260,7 +267,11 @@ mod tests {
         let dir = fixture_dir("plan_missing_folder");
         let missing = dir.join("nope");
 
-        let err = plan(&missing, &dir.join("dest")).expect_err("missing assets folder");
+        let err = plan(&missing, Path::new("dest")).expect_err("missing assets folder");
+        assert!(
+            !dir.join("dest").exists(),
+            "plan must not create the destination"
+        );
         assert!(matches!(err, MangoError::General(_)), "{err:?}");
         assert!(err.to_string().contains("nope"), "{err}");
     }

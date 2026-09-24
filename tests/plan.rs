@@ -606,3 +606,183 @@ fn clean_is_reachable_through_the_library() {
     clean(&dist).expect("a missing output folder is success");
     assert!(dir.is_dir(), "only the output folder is removed");
 }
+
+// AC-arch-2.2.1; AC-arch-2.2.2: every output kind is planned and enumerated in
+// one fixed order: content pages, sections by slug, home, tag index, tag pages
+// by name, feed, sitemap, then asset copies by destination.
+#[test]
+fn plan_enumerates_every_kind_in_order() {
+    let p = project("plan_enumerates_every_kind_in_order");
+    let config = p.dir.join("mango.json");
+    write_file(&config, r#"{"base_url": "https://example.com"}"#);
+    write_file(
+        &p.site.join("a/b/c.md"),
+        &frontmatter("C", Some("2026-01-01"), Some(r#"["rust", "blog"]"#), false),
+    );
+    write_file(&p.assets.join("img/logo.svg"), "<svg/>\n");
+    write_file(&p.assets.join("z.txt"), "z\n");
+
+    let plan = plan(&options(&p, Some(&config))).expect("planning must succeed");
+
+    assert_eq!(
+        paths(&plan),
+        [
+            "a/b/c/index.html",
+            "a/index.html",
+            "a/b/index.html",
+            "index.html",
+            "tags/index.html",
+            "tags/blog/index.html",
+            "tags/rust/index.html",
+            "feed.xml",
+            "sitemap.xml",
+            "assets/img/logo.svg",
+            "assets/style.css",
+            "assets/z.txt",
+        ]
+        .map(PathBuf::from)
+    );
+    let kinds: Vec<&str> = plan
+        .outputs()
+        .map(|output| match output {
+            PlannedOutput::File { .. } => "file",
+            PlannedOutput::Copy { .. } => "copy",
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "file", "file", "file", "file", "file", "file", "file", "file", "file", "copy", "copy",
+            "copy",
+        ]
+    );
+}
+
+// AC-arch-2.3.1; AC-arch-2.3.2; AC-arch-2.3.3: the collision labels reachable
+// from real input are exact, and the earlier output in plan order is named
+// first.
+#[test]
+fn collision_labels_are_exact_for_reachable_kinds() {
+    // (a) A `tags/` content folder's section index vs the tag index.
+    let p = project("collision_labels_are_exact_for_reachable_kinds_a");
+    write_file(
+        &p.site.join("tags/one.md"),
+        &frontmatter("One", None, None, false),
+    );
+    let err = plan(&options(&p, None)).expect_err("section index vs tag index");
+    assert!(matches!(err, MangoError::General(_)), "{err:?}");
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "Mango Error: output path '{}' would be written by both section index 'tags' and tag index",
+            p.out.join("tags/index.html").display()
+        )
+    );
+
+    // (b) A tag page vs an asset, with the assets folder itself named `tags`.
+    let p = project("collision_labels_are_exact_for_reachable_kinds_b");
+    write_file(
+        &p.site.join("posts/one.md"),
+        &frontmatter("One", None, Some(r#"["blog"]"#), false),
+    );
+    let tags_assets = p.dir.join("tags");
+    write_file(&tags_assets.join("blog/index.html"), "asset\n");
+    let mut opts = options(&p, None);
+    opts.assets = tags_assets;
+    let err = plan(&opts).expect_err("tag page vs asset");
+    assert!(matches!(err, MangoError::General(_)), "{err:?}");
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "Mango Error: output path '{}' would be written by both tag page 'blog' and asset 'blog/index.html'",
+            p.out.join("tags/blog/index.html").display()
+        )
+    );
+
+    // (c) The sitemap file vs a page that needs `sitemap.xml/` as a folder.
+    let p = project("collision_labels_are_exact_for_reachable_kinds_c");
+    let config = p.dir.join("mango.json");
+    write_file(&config, r#"{"base_url": "https://example.com"}"#);
+    write_file(
+        &p.site.join("sitemap.xml.md"),
+        &frontmatter("Sitemap", None, None, false),
+    );
+    let err = plan(&options(&p, Some(&config))).expect_err("sitemap file vs folder");
+    assert!(matches!(err, MangoError::General(_)), "{err:?}");
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "Mango Error: output path '{}' would be written as a file by sitemap, but page 'sitemap.xml' needs it to be a directory for '{}'",
+            p.out.join("sitemap.xml").display(),
+            p.out.join("sitemap.xml/index.html").display()
+        )
+    );
+}
+
+// AC-arch-2.7.4: a content page and an asset that map to the same file fail
+// planning with the full exact-collision message, the page named first.
+#[test]
+fn page_and_asset_collision_names_the_page_first() {
+    let p = project("page_and_asset_collision_names_the_page_first");
+    write_file(
+        &p.site.join("assets/x.md"),
+        &frontmatter("X", None, None, false),
+    );
+    write_file(&p.assets.join("x/index.html"), "asset\n");
+
+    let err = plan(&options(&p, None)).expect_err("page vs asset");
+
+    assert!(matches!(err, MangoError::General(_)), "{err:?}");
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "Mango Error: output path '{}' would be written by both page 'assets/x' and asset 'x/index.html'",
+            p.out.join("assets/x/index.html").display()
+        )
+    );
+}
+
+// AC-arch-2.3.5: the collision check runs before any template is rendered, so
+// a collision is reported even when a template would also fail.
+#[test]
+fn collision_is_reported_before_a_render_error() {
+    let p = project("collision_is_reported_before_a_render_error");
+    write_file(&p.templates.join("page.html"), "{{ missing.value }}");
+    write_file(
+        &p.site.join("posts.md"),
+        &frontmatter("Posts", None, None, false),
+    );
+    write_file(
+        &p.site.join("posts/one.md"),
+        &frontmatter("One", None, None, false),
+    );
+
+    let err = plan(&options(&p, None)).expect_err("collision and broken template");
+
+    assert!(matches!(err, MangoError::General(_)), "{err:?}");
+    assert!(
+        err.to_string()
+            .contains("both page 'posts' and section index 'posts'"),
+        "{err}"
+    );
+}
+
+// AC-arch-2.5.2: when several templates fail, the error is for the first
+// output in plan order whose template fails.
+#[test]
+fn first_render_error_in_output_order_is_reported() {
+    let p = project("first_render_error_in_output_order_is_reported");
+    write_file(&p.templates.join("section.html"), "{{ missing.value }}");
+    write_file(&p.templates.join("tag.html"), "{{ missing.value }}");
+    write_file(
+        &p.site.join("posts/one.md"),
+        &frontmatter("One", None, Some(r#"["rust"]"#), false),
+    );
+
+    let err = plan(&options(&p, None)).expect_err("broken section and tag templates");
+
+    assert!(matches!(err, MangoError::Template(_)), "{err:?}");
+    let msg = err.to_string();
+    assert!(msg.contains("section.html"), "{msg}");
+    assert!(!msg.contains("tag.html"), "{msg}");
+}

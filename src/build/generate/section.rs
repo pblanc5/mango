@@ -1,12 +1,12 @@
 use crate::{
-    build::index::section::SectionIndex,
+    build::{index::section::SectionIndex, output::Output},
     config::SiteConfig,
-    render::template::{self, RenderItem, SectionLink},
+    render::template::{self, SectionLink},
 };
 
-/// Render items come out in ascending section-slug order (the index is a
+/// Section outputs come out in ascending section-slug order (the index is a
 /// `BTreeMap`), ancestor sections included.
-pub fn build(si: SectionIndex, config: &SiteConfig) -> Vec<RenderItem> {
+pub fn build(si: SectionIndex, config: &SiteConfig) -> Vec<Output> {
     si.sections
         .into_iter()
         .map(|(slug, section)| {
@@ -24,10 +24,11 @@ pub fn build(si: SectionIndex, config: &SiteConfig) -> Vec<RenderItem> {
 mod tests {
     use super::*;
     use crate::{
-        build::index::section::build_section_index,
+        build::{index::section::build_section_index, output::OutputKind},
         content::{
             frontmatter::MangoFrontmatter,
             page::{Page, PageType},
+            slug::Slug,
         },
     };
     use std::path::Path;
@@ -61,13 +62,17 @@ mod tests {
         ];
 
         let items = build(build_section_index(&pages), &SiteConfig::default());
-        let slugs: Vec<_> = items.iter().map(|i| i.slug.to_string()).collect();
-        assert_eq!(slugs, ["a", "a/b", "posts", "projects"]);
-        assert_eq!(items[2].source, "section index 'posts'");
+        let kinds: Vec<_> = items.iter().map(|i| &i.kind).collect();
+        let expected: Vec<_> = ["a", "a/b", "posts", "projects"]
+            .map(|s| OutputKind::Section(Slug::from_test_text(s)))
+            .into_iter()
+            .collect();
+        assert_eq!(kinds, expected.iter().collect::<Vec<_>>());
+        assert_eq!(items[2].kind.to_string(), "section index 'posts'");
 
         // AC-3.3, AC-1.11
-        let a = items[0].context.get("section").unwrap();
+        let a = items[0].context().get("section").unwrap();
         assert_eq!(a["subsections"][0]["url"], "/a/b/");
-        assert!(items[0].context.get("config").is_some());
+        assert!(items[0].context().get("config").is_some());
     }
 }

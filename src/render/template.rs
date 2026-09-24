@@ -5,6 +5,7 @@ use serde::Serialize;
 use tera::Tera;
 
 use crate::{
+    build::output::{Body, Output, OutputKind},
     config::SiteConfig,
     content::{page::Page, slug::Slug, summary::PageSummary, tag::Tag},
     error::MangoError,
@@ -140,17 +141,6 @@ struct HomeTemplate {
     sections: Vec<HomeSection>,
 }
 
-pub struct RenderItem {
-    pub slug: Slug,
-    /// Human-readable origin, used in collision errors.
-    pub source: String,
-    pub template: String,
-    pub context: tera::Context,
-    /// The page date for content page items (`None` for undated pages and
-    /// every other item kind). The sitemap uses it for `<lastmod>`.
-    pub page_date: Option<NaiveDate>,
-}
-
 pub fn load_templates(templates: &Path) -> Result<Tera, MangoError> {
     if !templates.is_dir() {
         let msg = format!(
@@ -171,7 +161,7 @@ pub fn load_templates(templates: &Path) -> Result<Tera, MangoError> {
     Tera::new(template_glob).map_err(MangoError::Template)
 }
 
-pub fn render_page(page: &Page, config: &SiteConfig) -> Result<RenderItem, MangoError> {
+pub fn render_page(page: &Page, config: &SiteConfig) -> Result<Output, MangoError> {
     use tera::Context;
     let mut context = Context::new();
 
@@ -180,13 +170,15 @@ pub fn render_page(page: &Page, config: &SiteConfig) -> Result<RenderItem, Mango
 
     context.insert("page", &page_template);
     context.insert("config", config);
-    let template = "page.html";
-    Ok(RenderItem {
-        slug: page.slug.clone(),
-        source: format!("page '{}'", page.slug),
-        template: template.into(),
-        context,
-        page_date: page.date,
+    Ok(Output {
+        kind: OutputKind::Page {
+            slug: page.slug.clone(),
+            date: page.date,
+        },
+        body: Body::Template {
+            name: "page.html",
+            context,
+        },
     })
 }
 
@@ -195,7 +187,7 @@ pub fn render_section_page(
     pages: Vec<PageSummary>,
     subsections: Vec<SectionLink>,
     config: &SiteConfig,
-) -> RenderItem {
+) -> Output {
     use tera::Context;
     let mut context = Context::new();
     let template = SectionTemplate {
@@ -207,12 +199,12 @@ pub fn render_section_page(
     context.insert("section", &template);
     context.insert("config", config);
 
-    RenderItem {
-        source: format!("section index '{}'", template.slug),
-        slug: template.slug,
-        template: "section.html".into(),
-        context,
-        page_date: None,
+    Output {
+        kind: OutputKind::Section(template.slug),
+        body: Body::Template {
+            name: "section.html",
+            context,
+        },
     }
 }
 
@@ -220,57 +212,56 @@ pub fn render_home_page(
     recent: Vec<PageSummary>,
     sections: Vec<HomeSection>,
     config: &SiteConfig,
-) -> RenderItem {
+) -> Output {
     use tera::Context;
     let mut context = Context::new();
     context.insert("home", &HomeTemplate { recent, sections });
     context.insert("config", config);
 
-    RenderItem {
-        slug: Slug::home(),
-        source: "home page".into(),
-        template: "home.html".into(),
-        context,
-        page_date: None,
+    Output {
+        kind: OutputKind::Home,
+        body: Body::Template {
+            name: "home.html",
+            context,
+        },
     }
 }
 
-/// The tag index item (`dist/tags/index.html`). `entries` should already be
+/// The tag index output (`dist/tags/index.html`). `entries` should already be
 /// sorted by name.
-pub fn render_tag_index(entries: Vec<TagIndexEntry>, config: &SiteConfig) -> RenderItem {
+pub fn render_tag_index(entries: Vec<TagIndexEntry>, config: &SiteConfig) -> Output {
     use tera::Context;
     let mut context = Context::new();
     context.insert("tags", &entries);
     context.insert("config", config);
 
-    RenderItem {
-        slug: Slug::tag_index(),
-        source: "tag index".into(),
-        template: "tags.html".into(),
-        context,
-        page_date: None,
+    Output {
+        kind: OutputKind::TagIndex,
+        body: Body::Template {
+            name: "tags.html",
+            context,
+        },
     }
 }
 
-/// One tag page item (`dist/tags/<name>/index.html`).
-pub fn render_tag_page(tag: Tag, pages: Vec<PageSummary>, config: &SiteConfig) -> RenderItem {
+/// One tag page output (`dist/tags/<name>/index.html`).
+pub fn render_tag_page(tag: Tag, pages: Vec<PageSummary>, config: &SiteConfig) -> Output {
     use tera::Context;
     let mut context = Context::new();
-    let slug = tag.slug();
     let template = TagTemplate {
-        url: slug.url(),
+        url: tag.slug().url(),
         name: tag,
         pages,
     };
     context.insert("tag", &template);
     context.insert("config", config);
 
-    RenderItem {
-        source: format!("tag page '{}'", template.name),
-        slug,
-        template: "tag.html".into(),
-        context,
-        page_date: None,
+    Output {
+        kind: OutputKind::Tag(template.name),
+        body: Body::Template {
+            name: "tag.html",
+            context,
+        },
     }
 }
 
@@ -323,7 +314,7 @@ mod tests {
         .unwrap();
 
         let item = render_page(&page, &SiteConfig::default()).unwrap();
-        let ctx = item.context.get("page").expect("page context missing");
+        let ctx = item.context().get("page").expect("page context missing");
         assert_eq!(ctx["description"], "my first post");
     }
 
@@ -335,18 +326,28 @@ mod tests {
         let undated = page_with("posts/undated", None);
 
         let item = render_page(&dated, &config).unwrap();
-        assert_eq!(item.context.get("page").unwrap()["date"], "2026-01-24");
-        assert_eq!(item.source, "page 'posts/dated'");
+        assert_eq!(item.context().get("page").unwrap()["date"], "2026-01-24");
+        assert_eq!(item.kind.to_string(), "page 'posts/dated'");
+        assert_eq!(
+            item.kind,
+            OutputKind::Page {
+                slug: Slug::from_test_text("posts/dated"),
+                date: NaiveDate::from_ymd_opt(2026, 1, 24),
+            }
+        );
 
         let item = render_page(&undated, &config).unwrap();
-        assert_eq!(item.context.get("page").unwrap()["date"], "");
+        assert_eq!(item.context().get("page").unwrap()["date"], "");
     }
 
     // AC-5.2
     #[test]
     fn page_context_includes_url() {
         let item = render_page(&page_with("posts/post_one", None), &SiteConfig::default()).unwrap();
-        assert_eq!(item.context.get("page").unwrap()["url"], "/posts/post_one/");
+        assert_eq!(
+            item.context().get("page").unwrap()["url"],
+            "/posts/post_one/"
+        );
     }
 
     // AC-1.10, AC-1.11
@@ -357,7 +358,10 @@ mod tests {
             ..SiteConfig::default()
         };
         let item = render_page(&page_with("a", None), &config).unwrap();
-        let ctx = item.context.get("config").expect("config context missing");
+        let ctx = item
+            .context()
+            .get("config")
+            .expect("config context missing");
         assert_eq!(ctx["title"], "Site");
         assert!(ctx["author"].is_null(), "{ctx}");
         assert!(ctx["description"].is_null(), "{ctx}");
@@ -374,14 +378,14 @@ mod tests {
             vec![SectionLink::new(Slug::from_test_text("a/b"))],
             &SiteConfig::default(),
         );
-        assert_eq!(item.slug, Slug::from_test_text("a"));
-        assert_eq!(item.source, "section index 'a'");
-        let section = item.context.get("section").unwrap();
+        assert_eq!(item.kind, OutputKind::Section(Slug::from_test_text("a")));
+        assert_eq!(item.kind.to_string(), "section index 'a'");
+        let section = item.context().get("section").unwrap();
         assert_eq!(section["url"], "/a/");
         assert_eq!(section["pages"].as_array().unwrap().len(), 0);
         assert_eq!(section["subsections"][0]["slug"], "a/b");
         assert_eq!(section["subsections"][0]["url"], "/a/b/");
-        assert_eq!(item.context.get("config").unwrap()["recent_count"], 10);
+        assert_eq!(item.context().get("config").unwrap()["recent_count"], 10);
     }
 
     // AC-arch-3.4.3
@@ -393,7 +397,7 @@ mod tests {
             vec![SectionLink::new(Slug::from_test_text("a/b"))],
             &SiteConfig::default(),
         );
-        let section = item.context.get("section").unwrap();
+        let section = item.context().get("section").unwrap();
         assert_eq!(section["slug"], serde_json::json!("a"));
         assert_eq!(section["subsections"][0]["slug"], serde_json::json!("a/b"));
     }
@@ -406,15 +410,15 @@ mod tests {
             vec![HomeSection::new(Slug::from_test_text("posts"), 3)],
             &SiteConfig::default(),
         );
-        assert_eq!(item.slug, Slug::home());
-        assert_eq!(item.source, "home page");
-        assert_eq!(item.template, "home.html");
-        let home = item.context.get("home").unwrap();
+        assert_eq!(item.kind, OutputKind::Home);
+        assert_eq!(item.kind.to_string(), "home page");
+        assert_eq!(item.template_name(), "home.html");
+        let home = item.context().get("home").unwrap();
         assert_eq!(home["recent"].as_array().unwrap().len(), 0);
         assert_eq!(home["sections"][0]["slug"], "posts");
         assert_eq!(home["sections"][0]["url"], "/posts/");
         assert_eq!(home["sections"][0]["page_count"], 3);
-        assert!(item.context.get("config").is_some());
+        assert!(item.context().get("config").is_some());
     }
 
     // AC-3.1 (batch 4)
@@ -442,7 +446,7 @@ mod tests {
         .unwrap();
 
         let item = render_page(&page, &SiteConfig::default()).unwrap();
-        let tags = &item.context.get("page").unwrap()["tags"];
+        let tags = &item.context().get("page").unwrap()["tags"];
         assert_eq!(
             *tags,
             serde_json::json!([
@@ -450,7 +454,13 @@ mod tests {
                 { "name": "blog", "url": "/tags/blog/" },
             ])
         );
-        assert_eq!(item.page_date, page.date);
+        assert_eq!(
+            item.kind,
+            OutputKind::Page {
+                slug: page.slug.clone(),
+                date: page.date,
+            }
+        );
     }
 
     // AC-2.2 (batch 4)
@@ -464,18 +474,18 @@ mod tests {
             ],
             &config,
         );
-        assert_eq!(item.slug, Slug::tag_index());
-        assert_eq!(item.source, "tag index");
-        assert_eq!(item.template, "tags.html");
-        assert_eq!(item.page_date, None);
+        // The tag index kind carries no date by type.
+        assert_eq!(item.kind, OutputKind::TagIndex);
+        assert_eq!(item.kind.to_string(), "tag index");
+        assert_eq!(item.template_name(), "tags.html");
         assert_eq!(
-            *item.context.get("tags").unwrap(),
+            *item.context().get("tags").unwrap(),
             serde_json::json!([
                 { "name": "blog", "url": "/tags/blog/", "page_count": 2 },
                 { "name": "rust", "url": "/tags/rust/", "page_count": 1 },
             ])
         );
-        assert_eq!(item.context.get("config").unwrap()["recent_count"], 10);
+        assert_eq!(item.context().get("config").unwrap()["recent_count"], 10);
     }
 
     // AC-2.3, AC-3.2 (batch 4)
@@ -487,11 +497,17 @@ mod tests {
             vec![PageSummary::from(&page)],
             &SiteConfig::default(),
         );
-        assert_eq!(item.slug.to_string(), "tags/blog");
-        assert_eq!(item.source, "tag page 'blog'");
-        assert_eq!(item.template, "tag.html");
-        assert_eq!(item.page_date, None);
-        let tag = item.context.get("tag").unwrap();
+        assert_eq!(item.kind, OutputKind::Tag(tag("blog")));
+        assert_eq!(
+            item.path(Path::new("dist")),
+            Path::new("dist")
+                .join("tags")
+                .join("blog")
+                .join("index.html")
+        );
+        assert_eq!(item.kind.to_string(), "tag page 'blog'");
+        assert_eq!(item.template_name(), "tag.html");
+        let tag = item.context().get("tag").unwrap();
         assert_eq!(tag["name"], "blog");
         assert_eq!(tag["url"], "/tags/blog/");
         assert_eq!(
@@ -504,7 +520,7 @@ mod tests {
             }])
         );
         assert!(tag["pages"][0].get("tags").is_none());
-        assert!(item.context.get("config").is_some());
+        assert!(item.context().get("config").is_some());
     }
 
     // AC-1.10
@@ -518,7 +534,7 @@ mod tests {
         .unwrap();
         let item = render_home_page(Vec::new(), Vec::new(), &SiteConfig::default());
 
-        let html = tera.render("t.html", &item.context).unwrap();
+        let html = tera.render("t.html", item.context()).unwrap();
         assert_eq!(html, "My Site||no");
     }
 }

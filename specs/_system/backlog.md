@@ -11,7 +11,7 @@ Statuses: `open`, `done`, `dropped`. Sizes: **S** (one module, under a day), **M
 | [FEAT-1](#feat-1) | Dev server (`run`) | medium | L | `/spec-feature` | ARCH-1, a dependency approval | open |
 | [FEAT-2](#feat-2) | `publish`: dropped, never implemented | — | — | — | — | dropped |
 | [ARCH-1](#arch-1) | Split the build into plan and commit; add `lib.rs` | high | L | `/spec-feature` | — | done |
-| [ARCH-2](#arch-2) | One output model instead of three | high | L | `/spec-feature` | ARCH-1, ARCH-3 | open |
+| [ARCH-2](#arch-2) | One output model instead of three | high | L | `/spec-feature` | ARCH-1, ARCH-3 | done |
 | [ARCH-3](#arch-3) | `Slug` and `Tag` newtypes | high | M | `/spec-feature` | — | done |
 | [ARCH-4](#arch-4) | Structured error variants instead of `General(String)` | medium | M | `/ship-feature` | — | open |
 | [ARCH-5](#arch-5) | Break up `render/template.rs` | medium | M | `/ship-feature` | ARCH-2 (easier after) | open |
@@ -27,6 +27,8 @@ Statuses: `open`, `done`, `dropped`. Sizes: **S** (one module, under a day), **M
 | [RISK-4](#risk-4) | Unknown frontmatter keys are silently ignored | medium | S | `/spec-feature` | — | open |
 | [RISK-5](#risk-5) | Unresolvable symlinks under `site/` are silently ignored | low | S | `/ship-feature` | — | open |
 | [RISK-6](#risk-6) | Backslashes in file names become folder separators | low | S | `/spec-feature` | — | open |
+| [RISK-7](#risk-7) | Asset-copy errors name the source, not the destination | low | S | `/ship-feature` | — | open |
+| [RISK-8](#risk-8) | Content page order depends on the filesystem | low | S | `/spec-feature` | — | open |
 | [TEST-1](#test-1) | No test for CRLF line endings | low | S | `/ship-feature` | — | done |
 | [DOC-1](#doc-1) | Stale line references in the system overview | low | S | `/ship-feature` | — | open |
 
@@ -62,7 +64,7 @@ pub fn commit(plan: BuildPlan, dist: &Path) -> Result<(), MangoError>; // safety
 **Landed.** The crate now builds a library (`src/lib.rs`) alongside the binary. Every module under `lib.rs` is private and the public surface is exactly seven re-exports — `plan`, `commit`, `clean`, `BuildOptions`, `BuildPlan`, `PlannedOutput`, `MangoError` — so a `pub` item nothing uses still trips the dead-code lint. `src/build/pipeline.rs` holds the seam: `plan(&BuildOptions)` loads, checks and renders everything while writing nothing, and `commit(BuildPlan)` is the only function that empties or writes the output folder. `BuildPlan`'s fields are private and `plan` is its only constructor, so "nothing is touched until everything has succeeded" is structural rather than positional; the plan is bound to the folder it was planned against (`commit` takes no destination, contrary to the sketch above) and `BuildPlan::outputs()` enumerates every file and asset copy for inspection. `ensure_safe_to_clean`, `clean_contents` and `mango clean` moved to `src/build/clean.rs` with their seven unit tests; `src/cli.rs` is binary-only and now contains nothing but clap definitions and dispatch. New `tests/plan.rs` has 13 in-process tests covering collisions (exact and file-vs-folder), failure precedence, the write-free guarantee, plan enumeration and determinism, commit's output and safety refusal, section ordering, `recent_count`, draft exclusion, draft validation and `clean`; `home_recent_respects_recent_count_and_skips_undated` and `build_excludes_draft_pages` moved there from `tests/build.rs`, which gained two safety-net tests (pipeline-order failure precedence and the `./<site>` error form) and is otherwise unchanged. No message, flag, output byte or exit code changed, and no dependency was added.
 
 ### ARCH-2
-**One output model instead of three** · high · L · `/spec-feature` · depends on ARCH-1, ARCH-3 · open
+**One output model instead of three** · high · L · `/spec-feature` · depends on ARCH-1, ARCH-3 · done
 
 **Problem.** Outputs come in three shapes: `RenderItem` (slug + template + context), `GeneratedFile` (path + text) and `AssetFile` (source → destination). `check_collisions`, rendering and writing each handle the three separately. Two symptoms: `source: String` is a free-text label that exists only for error messages, and `page_date: Option<NaiveDate>` was bolted onto `RenderItem` so the sitemap could find `lastmod`.
 
@@ -78,6 +80,8 @@ Collision labels become `Display for ItemKind`; the sitemap selects `ItemKind::P
 - `RenderItem`, `GeneratedFile` and `AssetFile` are replaced by one type; `source` strings and `page_date` are gone.
 - Collision error messages are unchanged (existing tests pass without edits to their expected text).
 - The sitemap no longer depends on a field that exists only for it.
+
+**Landed.** One crate-private `Output { kind: OutputKind, body: Body }` in `src/build/output.rs` (spec `specs/arch-2/`). `OutputKind` is `Page { slug, date }`, `Section(Slug)`, `Home`, `TagIndex`, `Tag(Tag)`, `Feed`, `Sitemap` or `Asset { folder, rel }`; `Body` is `Template { name, context }`, `Text(String)` or `Copy(PathBuf)`. The sketch's stored `path` was not adopted: the location is derived from the kind (`Output::path(dist)`, via `Slug::output_path` for slug-addressed kinds), so it cannot disagree with the slug. The collision label is `Display for OutputKind`, and the sitemap selects and dates entries with an exhaustive `match` on the kind, so it ignores the feed, itself and assets whatever list it is given. `pipeline::plan` builds one `Vec<Output>` (pages, sections, home, tag index, tag pages, feed, sitemap, assets last); `check_collisions` takes that slice, `output::render` turns it into `RenderedOutput`s (`Contents::Text` or `Contents::Copy`), `BuildPlan` holds that one list and `commit` writes it with a single `output::write`, which now also copies assets. `RenderItem`, `GeneratedFile`, `AssetFile`, `RenderedFile`, `render_generated`, `assets::copy`, every `source`/`label` string and `page_date` are gone. The five constructors in `render/template.rs` now return `Output`, so `build` no longer imports its core type from `render` (see ARCH-5). Rewritten unit tests kept their names and tags; `tests/plan.rs` gained five safety-net tests (full kind order, exact reachable labels, page-vs-asset collision, collision before render error, first render error in order), and unit tests pin every kind's label and path, commit-time I/O error paths and sitemap selection by kind. Two quirks found on the way were kept and are tracked as [RISK-7](#risk-7) and [RISK-8](#risk-8). Fixture output is byte-identical, no message, order or exit code changed, the public surface and `README.md` are unchanged, and no dependency was added.
 
 ### ARCH-3
 **`Slug` and `Tag` newtypes** · high · M · `/spec-feature` · done
@@ -108,11 +112,13 @@ Collision labels become `Display for ItemKind`; the sitemap selects `ItemKind::P
 ### ARCH-5
 **Break up `render/template.rs`** · medium · M · `/ship-feature` · easier after ARCH-2 · open
 
-**Problem.** The largest source file (about 280 non-test lines) does four jobs: loading Tera, defining every view model, constructing every `RenderItem`, and running markdown (`render_page` calls `to_html`). `RenderItem` is a build-output concept, but `build` depends on `render` for it. Small smells: `PageTemplate::add_content` rebuilds the whole struct to set one field, and `use tera::Context;` is repeated inside each constructor.
+**Problem.** The largest source file (about 280 non-test lines) does four jobs: loading Tera, defining every view model, constructing every template `Output`, and running markdown (`render_page` calls `to_html`). Small smells: `PageTemplate::add_content` rebuilds the whole struct to set one field, and `use tera::Context;` is repeated inside each constructor.
 
-**Proposal.** `render/context.rs` for view models, `render/template.rs` for Tera loading only, item construction moved into `build/generate/*`, the output type moved into `build/` (or replaced by ARCH-2's `Output`).
+**Proposal.** `render/context.rs` for view models, `render/template.rs` for Tera loading only, item construction moved into `build/generate/*`.
 
 **Done when.** Each file has one job, `build` no longer imports its core type from `render`, and output is byte-identical.
+
+**Partly landed with ARCH-2.** The "`build` no longer imports its core type from `render`" bullet is done: the output type is `build::output::Output`, and `RenderItem` is gone. The dependency now runs the other way — `render/template.rs` imports `Output` from `build` because it still constructs the template outputs — and moving that construction into `build/generate/*` removes the edge. View models, Tera loading, item construction and `add_content` stay open.
 
 ### ARCH-6
 **Tidy the `Page` model** · medium · S · `/ship-feature` · open
@@ -241,6 +247,16 @@ An entry under `site/` whose target cannot be resolved — a dangling symlink, o
 **Backslashes in file names become folder separators** · low · S · `/spec-feature` · open
 
 `Slug::from_content_path` rewrites every `\` in the site-relative path to `/`, which is right on Windows (where `\` is a separator) but on Unix turns a single file literally named `a\b.md` into the slug `a/b`: it is published at `/a/b/` and creates a section `a` that has no folder, even though the file-name rule does not allow `\` in a name. This was kept unchanged by ARCH-3 and is pinned by `content::slug::tests::backslash_in_stem_becomes_separator`. Either reject `\` in a file name on platforms where it is not a separator (a user-visible strictness change, hence `/spec-feature`), or document the behavior in `README.md`.
+
+### RISK-7
+**Asset-copy errors name the source, not the destination** · low · S · `/ship-feature` · open
+
+When copying an asset fails during `commit`, `output::write` reports `IoPath` with the asset's **source** path, even when the destination is the problem (for example, a folder already sits where the file should go). The message then points at the input file, which is not what failed. `copy_failure_is_an_error_naming_the_path` does not catch this, because it only checks for `style.css`, which appears in both paths. `copy_failure_names_the_source_path` (arch-2, AC-5.4) pins the current behavior. Name the destination instead, or both paths, and update that test.
+
+### RISK-8
+**Content page order depends on the filesystem** · low · S · `/spec-feature` · open
+
+`loader::load` returns pages in `read_dir` order, which is not sorted and differs between filesystems. Content pages come first in the plan, so the order of `BuildPlan::outputs()`, the order files are written in, and which page's render error is reported when several pages fail all vary by filesystem. The output bytes do not: every listing is sorted, and a page-vs-page collision prints the same labels either way. Recorded as baseline AC-2.4 in `specs/arch-2/requirements.md`. Proposal: sort pages by slug in the loader, so enumeration and error precedence are deterministic too. Because this changes which error a user sees first, it is a `/spec-feature` change.
 
 ### TEST-1
 **No test for CRLF line endings** · low · S · `/ship-feature` · done

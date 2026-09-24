@@ -1,9 +1,9 @@
-use std::{fmt::Write as _, path::PathBuf};
+use std::fmt::Write as _;
 
 use crate::{
     build::{
         generate::{home::recent_pages, xml::escape},
-        output::GeneratedFile,
+        output::{Body, Output, OutputKind},
     },
     config::{self, SiteConfig},
     content::page::Page,
@@ -11,7 +11,7 @@ use crate::{
 
 /// `dist/feed.xml`: an RSS 2.0 feed of the home page's recent list. `None`
 /// when `base_url` is unset, since RSS needs absolute links.
-pub fn build(pages: &[Page], config: &SiteConfig) -> Option<GeneratedFile> {
+pub fn build(pages: &[Page], config: &SiteConfig) -> Option<Output> {
     let base = config::base_url_root(config)?;
 
     let mut xml = String::new();
@@ -55,10 +55,9 @@ pub fn build(pages: &[Page], config: &SiteConfig) -> Option<GeneratedFile> {
     xml.push_str("  </channel>\n");
     xml.push_str("</rss>\n");
 
-    Some(GeneratedFile {
-        path: PathBuf::from("feed.xml"),
-        source: "RSS feed".into(),
-        contents: xml,
+    Some(Output {
+        kind: OutputKind::Feed,
+        body: Body::Text(xml),
     })
 }
 
@@ -114,8 +113,8 @@ mod tests {
         ]
     }
 
-    fn item_count(feed: &GeneratedFile) -> usize {
-        feed.contents.matches("<item>").count()
+    fn item_count(feed: &Output) -> usize {
+        feed.text().matches("<item>").count()
     }
 
     // AC-6.1 (batch 4)
@@ -129,8 +128,12 @@ mod tests {
     fn golden_feed() {
         let feed = build(&fixture_pages(), &config_with(Some("https://example.com"))).unwrap();
 
-        assert_eq!(feed.path, PathBuf::from("feed.xml"));
-        assert_eq!(feed.source, "RSS feed");
+        assert_eq!(feed.kind, OutputKind::Feed);
+        assert_eq!(feed.kind.to_string(), "RSS feed");
+        assert_eq!(
+            feed.path(Path::new("dist")),
+            Path::new("dist").join("feed.xml")
+        );
         let expected = "\
 <?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <rss version=\"2.0\">
@@ -155,7 +158,7 @@ mod tests {
   </channel>
 </rss>
 ";
-        assert_eq!(feed.contents, expected);
+        assert_eq!(feed.text(), expected);
     }
 
     // AC-6.2 (batch 4)
@@ -167,14 +170,14 @@ mod tests {
         };
         let feed = build(&[], &config).unwrap();
         assert!(
-            feed.contents.contains("    <title></title>\n"),
+            feed.text().contains("    <title></title>\n"),
             "{}",
-            feed.contents
+            feed.text()
         );
         assert!(
-            feed.contents.contains("    <description></description>\n"),
+            feed.text().contains("    <description></description>\n"),
             "{}",
-            feed.contents
+            feed.text()
         );
         assert_eq!(item_count(&feed), 0);
     }
@@ -187,10 +190,10 @@ mod tests {
         let slashed = build(&pages, &config_with(Some("https://example.com/"))).unwrap();
         let many = build(&pages, &config_with(Some("https://example.com///"))).unwrap();
 
-        assert_eq!(plain.contents, slashed.contents);
-        assert_eq!(plain.contents, many.contents);
-        let without_scheme = slashed.contents.replace("https://", "");
-        assert!(!without_scheme.contains("//"), "{}", slashed.contents);
+        assert_eq!(plain.text(), slashed.text());
+        assert_eq!(plain.text(), many.text());
+        let without_scheme = slashed.text().replace("https://", "");
+        assert!(!without_scheme.contains("//"), "{}", slashed.text());
     }
 
     // AC-6.5 (batch 4)
@@ -209,7 +212,8 @@ mod tests {
             ..SiteConfig::default()
         };
 
-        let xml = build(&pages, &config).unwrap().contents;
+        let feed = build(&pages, &config).unwrap();
+        let xml = feed.text();
         assert!(xml.contains("<title>A &amp; B</title>"), "{xml}");
         assert!(
             xml.contains("<description>&lt;site&gt;</description>"),
@@ -238,8 +242,8 @@ mod tests {
     fn undated_pages_excluded() {
         let feed = build(&fixture_pages(), &config_with(Some("https://example.com"))).unwrap();
         assert_eq!(item_count(&feed), 2);
-        assert!(!feed.contents.contains("About"), "{}", feed.contents);
-        assert!(!feed.contents.contains("/about/"), "{}", feed.contents);
+        assert!(!feed.text().contains("About"), "{}", feed.text());
+        assert!(!feed.text().contains("/about/"), "{}", feed.text());
     }
 
     // AC-6.6, AC-6.7 (batch 4)
@@ -261,9 +265,9 @@ mod tests {
         };
         let feed = build(&pages, &one).unwrap();
         assert!(
-            feed.contents.contains("Mango Task Tracker"),
+            feed.text().contains("Mango Task Tracker"),
             "{}",
-            feed.contents
+            feed.text()
         );
     }
 }
