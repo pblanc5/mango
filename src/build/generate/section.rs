@@ -30,6 +30,7 @@ mod tests {
             page::{Page, PageType},
         },
     };
+    use std::path::Path;
 
     fn page_with_slug(slug: &str) -> Page {
         let fm = MangoFrontmatter {
@@ -40,9 +41,14 @@ mod tests {
             tags: None,
             draft: false,
         };
-        let mut page = Page::new(fm, String::new(), PageType::General).unwrap();
-        page.slug = slug.to_string();
-        page
+        Page::new(
+            fm,
+            String::new(),
+            PageType::General,
+            Path::new(&format!("site/{slug}.md")),
+            Path::new("site"),
+        )
+        .unwrap()
     }
 
     // AC-2.4, AC-2.5; AC-3.7 (batch 3)
@@ -55,7 +61,7 @@ mod tests {
         ];
 
         let items = build(build_section_index(&pages), &SiteConfig::default());
-        let slugs: Vec<_> = items.iter().map(|i| i.slug.as_str()).collect();
+        let slugs: Vec<_> = items.iter().map(|i| i.slug.to_string()).collect();
         assert_eq!(slugs, ["a", "a/b", "posts", "projects"]);
         assert_eq!(items[2].source, "section index 'posts'");
 

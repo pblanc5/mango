@@ -3,7 +3,10 @@ use std::path::Path;
 use chrono::NaiveDate;
 use serde::{Serialize, Serializer};
 
-use crate::{content::frontmatter::MangoFrontmatter, error::MangoError};
+use crate::{
+    content::{frontmatter::MangoFrontmatter, slug::Slug, tag::Tag},
+    error::MangoError,
+};
 
 #[derive(Serialize, Debug)]
 pub enum PageType {
@@ -17,104 +20,40 @@ pub struct Page {
     pub description: String,
     #[serde(serialize_with = "serialize_date")]
     pub date: Option<NaiveDate>,
-    pub slug: String,
-    pub tags: Vec<String>,
+    pub slug: Slug,
+    pub tags: Vec<Tag>,
     pub content: String,
     pub draft: bool,
     pub kind: PageType,
 }
 
 impl Page {
-    pub fn new(fm: MangoFrontmatter, content: String, kind: PageType) -> Result<Self, MangoError> {
+    /// Builds a page from its frontmatter, body and content file path.
+    /// Validates the date, then the tags, then the slug, so a frontmatter
+    /// error is reported before a file-name error.
+    pub fn new(
+        fm: MangoFrontmatter,
+        content: String,
+        kind: PageType,
+        path: &Path,
+        site: &Path,
+    ) -> Result<Self, MangoError> {
         let date = fm.date.as_deref().map(parse_date).transpose()?;
-        let tags = validate_tags(fm.tags.unwrap_or_default())?;
+        let tags = Tag::parse_list(fm.tags.unwrap_or_default())?;
+        let slug = Slug::from_content_path(path, site)?;
 
         Ok(Page {
             title: fm.title,
             author: fm.author,
             description: fm.description,
             date,
-            slug: String::new(),
+            slug,
             tags,
             content,
             draft: fm.draft,
             kind,
         })
     }
-
-    /// Sets the slug from the path relative to the site folder, without the
-    /// extension. Every segment may only use ASCII letters, digits, `-`, `_`
-    /// and `.`, so page URLs, the feed and the sitemap need no encoding.
-    pub fn generate_slug(&mut self, path: &Path, site: &Path) -> Result<(), MangoError> {
-        let slug = path
-            .strip_prefix(site)
-            .map_err(|_e| MangoError::General("unable to generate slug from path".into()))?
-            .with_extension("")
-            .to_string_lossy()
-            .replace('\\', "/");
-
-        if let Some(segment) = slug.split('/').find(|s| !is_valid_slug_segment(s)) {
-            let msg = format!(
-                "{}: invalid file name '{segment}': use only ASCII letters, digits, '-', '_' and '.'",
-                path.display()
-            );
-            return Err(MangoError::General(msg));
-        }
-
-        self.slug = slug;
-        Ok(())
-    }
-}
-
-fn is_valid_slug_segment(segment: &str) -> bool {
-    !segment.is_empty()
-        && segment
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
-}
-
-/// Root-relative URL for a page or section slug: `"/<slug>/"`, or `"/"` for
-/// the empty (home) slug.
-pub fn slug_url(slug: &str) -> String {
-    if slug.is_empty() {
-        "/".to_string()
-    } else {
-        format!("/{slug}/")
-    }
-}
-
-/// Slug of a tag page: `tags/<name>`. The tag index itself is at `tags`.
-pub fn tag_slug(name: &str) -> String {
-    format!("tags/{name}")
-}
-
-/// Checks every tag against `^[a-z0-9]+(-[a-z0-9]+)*$` (tags are their own
-/// slugs) and removes duplicates, keeping the first occurrence's position.
-pub fn validate_tags(tags: Vec<String>) -> Result<Vec<String>, MangoError> {
-    let mut valid: Vec<String> = Vec::with_capacity(tags.len());
-
-    for tag in tags {
-        if !is_valid_tag(&tag) {
-            return Err(MangoError::Frontmatter(format!(
-                "invalid tag '{tag}': expected lowercase ASCII letters and digits separated by single hyphens"
-            )));
-        }
-        if !valid.contains(&tag) {
-            valid.push(tag);
-        }
-    }
-
-    Ok(valid)
-}
-
-fn is_valid_tag(tag: &str) -> bool {
-    !tag.is_empty()
-        && tag.split('-').all(|part| {
-            !part.is_empty()
-                && part
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
-        })
 }
 
 /// Parses a strict `YYYY-MM-DD` date. chrono's `parse_from_str` accepts
@@ -167,66 +106,53 @@ mod tests {
         }
     }
 
+    fn new_page(fm: MangoFrontmatter) -> Result<Page, MangoError> {
+        Page::new(
+            fm,
+            String::new(),
+            PageType::General,
+            Path::new("site/posts/one.md"),
+            Path::new("site"),
+        )
+    }
+
     // AC-1.4
     #[test]
     fn new_defaults_missing_date_and_tags() {
-        let page = Page::new(frontmatter(), "content".into(), PageType::General).unwrap();
+        let page = new_page(frontmatter()).unwrap();
 
         assert_eq!(page.date, None);
         assert!(page.tags.is_empty());
-        assert_eq!(page.slug, "");
+        assert_eq!(page.slug.to_string(), "posts/one");
     }
 
+    // AC-arch-3.5.7, AC-arch-3.1.1
     #[test]
-    fn generate_slug_strips_site_prefix_and_extension() {
-        let mut page = Page::new(frontmatter(), String::new(), PageType::General).unwrap();
-        page.generate_slug(Path::new("site/posts/post_one.md"), Path::new("site"))
-            .unwrap();
+    fn new_derives_slug_from_path() {
+        let page = Page::new(
+            frontmatter(),
+            String::new(),
+            PageType::General,
+            Path::new("site/a/b/c.md"),
+            Path::new("site"),
+        )
+        .unwrap();
+        assert_eq!(page.slug, Slug::from_test_text("a/b/c"));
 
-        assert_eq!(page.slug, "posts/post_one");
-    }
-
-    #[test]
-    fn generate_slug_fails_when_path_is_outside_site() {
-        let mut page = Page::new(frontmatter(), String::new(), PageType::General).unwrap();
-        let result = page.generate_slug(Path::new("elsewhere/post.md"), Path::new("site"));
-
-        assert!(matches!(result, Err(MangoError::General(_))));
-    }
-
-    #[test]
-    fn generate_slug_accepts_safe_names_and_rejects_others() {
-        for ok in ["site/posts/post_one.md", "site/A-b_c/v1.2.md"] {
-            let mut page = Page::new(frontmatter(), String::new(), PageType::General).unwrap();
-            page.generate_slug(Path::new(ok), Path::new("site"))
-                .unwrap_or_else(|e| panic!("{ok}: {e}"));
-        }
-
-        for (bad, segment) in [
-            ("site/my posts/one.md", "my posts"),
-            ("site/héllo.md", "héllo"),
-            ("site/a+b.md", "a+b"),
-        ] {
-            let mut page = Page::new(frontmatter(), String::new(), PageType::General).unwrap();
-            let err = page
-                .generate_slug(Path::new(bad), Path::new("site"))
-                .expect_err(bad);
-            assert!(matches!(err, MangoError::General(_)), "{bad}: {err:?}");
-            let msg = err.to_string();
-            assert!(msg.contains(bad), "{msg}");
-            assert!(
-                msg.contains(&format!("invalid file name '{segment}'")),
-                "{msg}"
-            );
-        }
-    }
-
-    // AC-5.1, AC-5.3, AC-5.5
-    #[test]
-    fn slug_url_is_root_relative_with_trailing_slash() {
-        assert_eq!(slug_url("posts/post_one"), "/posts/post_one/");
-        assert_eq!(slug_url("posts"), "/posts/");
-        assert_eq!(slug_url(""), "/");
+        let err = Page::new(
+            frontmatter(),
+            String::new(),
+            PageType::General,
+            Path::new("site/posts/...md"),
+            Path::new("site"),
+        )
+        .expect_err("dot-only segment");
+        assert!(matches!(err, MangoError::General(_)), "{err:?}");
+        assert!(
+            err.to_string()
+                .contains("invalid file name '..': a segment cannot consist only of dots"),
+            "{err}"
+        );
     }
 
     // AC-1.1
@@ -285,75 +211,24 @@ mod tests {
     fn new_rejects_invalid_date() {
         let mut fm = frontmatter();
         fm.date = Some("2026-02-30".into());
-        let result = Page::new(fm, String::new(), PageType::General);
+        let result = new_page(fm);
         assert!(matches!(result, Err(MangoError::Frontmatter(_))));
     }
 
-    // AC-1.1 (batch 4)
-    #[test]
-    fn validate_tags_accepts_valid_values() {
-        let good = ["blog", "static-site", "a1", "2026", "a-b-c"];
-        let tags: Vec<String> = good.iter().map(|t| t.to_string()).collect();
-        assert_eq!(validate_tags(tags).unwrap(), good);
-    }
-
-    // AC-1.2 (batch 4)
-    #[test]
-    fn validate_tags_rejects_invalid_values_naming_value() {
-        let bad = [
-            "",
-            "Rust",
-            "static site",
-            "c++",
-            "-rust",
-            "rust-",
-            "a--b",
-            "café",
-            "ünï",
-        ];
-        for value in bad {
-            let err = validate_tags(vec!["ok".into(), value.into()]).expect_err(value);
-            assert!(
-                matches!(err, MangoError::Frontmatter(_)),
-                "{value}: {err:?}"
-            );
-            let msg = err.to_string();
-            assert!(msg.contains(&format!("'{value}'")), "{value}: {msg}");
-            assert!(
-                msg.contains(&format!(
-                    "invalid tag '{value}': expected lowercase ASCII letters and digits separated by single hyphens"
-                )),
-                "{value}: {msg}"
-            );
-        }
-    }
-
-    // AC-1.3 (batch 4)
-    #[test]
-    fn validate_tags_removes_duplicates_keeping_order() {
-        let tags = ["b", "a", "b", "c", "a"].map(String::from).to_vec();
-        assert_eq!(validate_tags(tags).unwrap(), ["b", "a", "c"]);
-    }
-
-    // AC-1.4 (batch 4)
+    // AC-1.4 (batch 4); AC-arch-3.6.3
     #[test]
     fn new_rejects_invalid_tag() {
         let mut fm = frontmatter();
         fm.tags = Some(vec!["blog".into(), "Rust".into()]);
-        let err = Page::new(fm, String::new(), PageType::General).expect_err("bad tag");
+        let err = new_page(fm).expect_err("bad tag");
         assert!(matches!(err, MangoError::Frontmatter(_)), "{err:?}");
         assert!(err.to_string().contains("'Rust'"), "{err}");
 
         let mut fm = frontmatter();
         fm.tags = Some(vec!["b".into(), "a".into(), "b".into()]);
-        let page = Page::new(fm, String::new(), PageType::General).unwrap();
-        assert_eq!(page.tags, ["b", "a"]);
-    }
-
-    #[test]
-    fn tag_slug_is_under_tags() {
-        assert_eq!(tag_slug("blog"), "tags/blog");
-        assert_eq!(slug_url(&tag_slug("blog")), "/tags/blog/");
+        let page = new_page(fm).unwrap();
+        let tags: Vec<String> = page.tags.iter().map(Tag::to_string).collect();
+        assert_eq!(tags, ["b", "a"]);
     }
 
     // AC-1.5
@@ -361,8 +236,8 @@ mod tests {
     fn page_date_serializes_formatted_or_empty() {
         let mut fm = frontmatter();
         fm.date = Some("2026-01-24".into());
-        let dated = Page::new(fm, String::new(), PageType::General).unwrap();
-        let undated = Page::new(frontmatter(), String::new(), PageType::General).unwrap();
+        let dated = new_page(fm).unwrap();
+        let undated = new_page(frontmatter()).unwrap();
 
         assert_eq!(serde_json::to_value(&dated).unwrap()["date"], "2026-01-24");
         assert_eq!(serde_json::to_value(&undated).unwrap()["date"], "");

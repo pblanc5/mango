@@ -41,7 +41,7 @@ pub fn check_collisions<'a>(
 
     let outputs = items
         .into_iter()
-        .map(|item| (get_final_path(dist, &item.slug), item.source.as_str()))
+        .map(|item| (item.slug.output_path(dist), item.source.as_str()))
         .chain(
             files
                 .iter()
@@ -111,7 +111,7 @@ pub fn render(
         .iter()
         .map(|item| {
             Ok(RenderedFile {
-                path: get_final_path(dist, &item.slug),
+                path: item.slug.output_path(dist),
                 html: tera.render(&item.template, &item.context)?,
             })
         })
@@ -130,29 +130,21 @@ pub fn write(files: &[RenderedFile]) -> Result<(), MangoError> {
     Ok(())
 }
 
-fn get_final_path(dist: &Path, slug: &str) -> PathBuf {
-    let mut path = dist.to_path_buf();
-
-    if !slug.is_empty() {
-        for segment in slug.split('/') {
-            path.push(segment);
-        }
-    }
-
-    path.push("index.html");
-    path
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::content::slug::Slug;
     use std::fs;
 
     fn item(slug: &str, source: &str, template: &str) -> RenderItem {
+        item_at(Slug::from_test_text(slug), source, template)
+    }
+
+    fn item_at(slug: Slug, source: &str, template: &str) -> RenderItem {
         let mut context = tera::Context::new();
-        context.insert("slug", slug);
+        context.insert("slug", &slug);
         RenderItem {
-            slug: slug.into(),
+            slug,
             source: source.into(),
             template: template.into(),
             context,
@@ -233,8 +225,8 @@ mod tests {
     #[test]
     fn home_slug_maps_to_root_index() {
         let dist = Path::new("dist");
-        let home = item("", "home page", "t.html");
-        assert_eq!(get_final_path(dist, &home.slug), dist.join("index.html"));
+        let home = item_at(Slug::home(), "home page", "t.html");
+        assert_eq!(home.slug.output_path(dist), dist.join("index.html"));
 
         let pages = [page("posts/one")];
         let sections = [section("posts")];
@@ -246,7 +238,7 @@ mod tests {
         )
         .unwrap();
 
-        let other = item("", "other root", "t.html");
+        let other = item_at(Slug::home(), "other root", "t.html");
         let err =
             check_collisions(dist, [&home, &other], &[], &[]).expect_err("two root items collide");
         let msg = err.to_string();

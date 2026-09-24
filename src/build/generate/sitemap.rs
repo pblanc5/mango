@@ -5,7 +5,6 @@ use chrono::NaiveDate;
 use crate::{
     build::{generate::xml::escape, output::GeneratedFile},
     config::{self, SiteConfig},
-    content::page::slug_url,
     render::template::RenderItem,
 };
 
@@ -20,7 +19,7 @@ pub fn build<'a>(
 
     let mut entries: Vec<(String, Option<NaiveDate>)> = items
         .into_iter()
-        .map(|item| (format!("{base}{}", slug_url(&item.slug)), item.page_date))
+        .map(|item| (format!("{base}{}", item.slug.url()), item.page_date))
         .collect();
     entries.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -58,6 +57,7 @@ mod tests {
         },
         render::template,
     };
+    use std::path::Path;
 
     fn page_with(slug: &str, date: Option<&str>, tags: &[&str]) -> Page {
         let fm = MangoFrontmatter {
@@ -68,9 +68,14 @@ mod tests {
             tags: Some(tags.iter().map(|t| t.to_string()).collect()),
             draft: false,
         };
-        let mut page = Page::new(fm, String::new(), PageType::General).unwrap();
-        page.slug = slug.to_string();
-        page
+        Page::new(
+            fm,
+            String::new(),
+            PageType::General,
+            Path::new(&format!("site/{slug}.md")),
+            Path::new("site"),
+        )
+        .unwrap()
     }
 
     fn with_base(base_url: Option<&str>) -> SiteConfig {
@@ -207,10 +212,10 @@ mod tests {
     #[test]
     fn escapes_loc() {
         let config = with_base(Some("https://example.com/?a=1&b='2'"));
-        let item = template::render_page(&page_with("x<y", None, &[]), &config).unwrap();
+        let item = template::render_page(&page_with("x-y", None, &[]), &config).unwrap();
         let xml = build([&item], &config).unwrap().contents;
         assert!(
-            xml.contains("<loc>https://example.com/?a=1&amp;b=&apos;2&apos;/x&lt;y/</loc>"),
+            xml.contains("<loc>https://example.com/?a=1&amp;b=&apos;2&apos;/x-y/</loc>"),
             "{xml}"
         );
     }

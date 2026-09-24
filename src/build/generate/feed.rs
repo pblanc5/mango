@@ -6,7 +6,7 @@ use crate::{
         output::GeneratedFile,
     },
     config::{self, SiteConfig},
-    content::page::{Page, slug_url},
+    content::page::Page,
 };
 
 /// `dist/feed.xml`: an RSS 2.0 feed of the home page's recent list. `None`
@@ -33,7 +33,7 @@ pub fn build(pages: &[Page], config: &SiteConfig) -> Option<GeneratedFile> {
     for page in recent_pages(pages, config.recent_count) {
         // recent_pages only returns dated pages.
         let Some(date) = page.date else { continue };
-        let link = escape(&format!("{base}{}", slug_url(&page.slug)));
+        let link = escape(&format!("{base}{}", page.slug.url()));
 
         xml.push_str("    <item>\n");
         let _ = writeln!(xml, "      <title>{}</title>", escape(&page.title));
@@ -66,6 +66,7 @@ pub fn build(pages: &[Page], config: &SiteConfig) -> Option<GeneratedFile> {
 mod tests {
     use super::*;
     use crate::content::{frontmatter::MangoFrontmatter, page::PageType};
+    use std::path::Path;
 
     fn page_with(slug: &str, title: &str, description: &str, date: Option<&str>) -> Page {
         let fm = MangoFrontmatter {
@@ -76,9 +77,14 @@ mod tests {
             tags: None,
             draft: false,
         };
-        let mut page = Page::new(fm, String::new(), PageType::General).unwrap();
-        page.slug = slug.to_string();
-        page
+        Page::new(
+            fm,
+            String::new(),
+            PageType::General,
+            Path::new(&format!("site/{slug}.md")),
+            Path::new("site"),
+        )
+        .unwrap()
     }
 
     fn config_with(base_url: Option<&str>) -> SiteConfig {
@@ -191,7 +197,7 @@ mod tests {
     #[test]
     fn values_are_escaped() {
         let pages = vec![page_with(
-            "posts/a&b",
+            "posts/a-b",
             "Tom & \"Jerry\" <3",
             "it's <b>bold</b>",
             Some("2026-01-24"),
@@ -199,7 +205,7 @@ mod tests {
         let config = SiteConfig {
             title: Some("A & B".into()),
             description: Some("<site>".into()),
-            base_url: Some("https://example.com/?x='1'".into()),
+            base_url: Some("https://example.com/?x='1'&y=2".into()),
             ..SiteConfig::default()
         };
 
@@ -210,7 +216,7 @@ mod tests {
             "{xml}"
         );
         assert!(
-            xml.contains("<link>https://example.com/?x=&apos;1&apos;/</link>"),
+            xml.contains("<link>https://example.com/?x=&apos;1&apos;&amp;y=2/</link>"),
             "{xml}"
         );
         assert!(
@@ -218,7 +224,7 @@ mod tests {
             "{xml}"
         );
         assert!(
-            xml.contains("<link>https://example.com/?x=&apos;1&apos;/posts/a&amp;b/</link>"),
+            xml.contains("<link>https://example.com/?x=&apos;1&apos;&amp;y=2/posts/a-b/</link>"),
             "{xml}"
         );
         assert!(

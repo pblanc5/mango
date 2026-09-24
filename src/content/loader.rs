@@ -71,8 +71,8 @@ fn traverse(site: &Path, dir: &Path, pages: &mut Vec<Page>) -> Result<(), MangoE
 
         match frontmatter {
             Some(fm) => {
-                let mut page = Page::new(fm, markdown, PageType::General).map_err(with_path)?;
-                page.generate_slug(path, site)?;
+                let page =
+                    Page::new(fm, markdown, PageType::General, path, site).map_err(with_path)?;
                 pages.push(page);
             }
 
@@ -171,7 +171,7 @@ mod tests {
 
         let pages = load(&site).unwrap();
         assert_eq!(pages.len(), 1);
-        assert_eq!(pages[0].slug, "a/b/page");
+        assert_eq!(pages[0].slug.to_string(), "a/b/page");
     }
 
     // AC-1.4
@@ -194,7 +194,7 @@ mod tests {
         write_file(&site.join("posts/secret.md"), &page("Secret", true));
 
         let pages = load(&site).unwrap();
-        let slugs: Vec<_> = pages.iter().map(|p| p.slug.as_str()).collect();
+        let slugs: Vec<_> = pages.iter().map(|p| p.slug.to_string()).collect();
         assert_eq!(slugs, vec!["posts/published"]);
     }
 
@@ -308,7 +308,7 @@ mod tests {
         write_file(&site.join("notes.md/inner.md"), &page("Inner", false));
 
         let pages = load(&site).unwrap();
-        let slugs: Vec<_> = pages.iter().map(|p| p.slug.as_str()).collect();
+        let slugs: Vec<_> = pages.iter().map(|p| p.slug.to_string()).collect();
         assert_eq!(slugs, vec!["notes.md/inner"]);
     }
 
@@ -321,7 +321,11 @@ mod tests {
         write_file(&site.join("e.txt"), "not a page");
         write_file(&site.join("f.mdx"), "not a page");
 
-        let mut slugs: Vec<_> = load(&site).unwrap().into_iter().map(|p| p.slug).collect();
+        let mut slugs: Vec<_> = load(&site)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.slug.to_string())
+            .collect();
         slugs.sort();
         assert_eq!(slugs, ["a", "b", "c", "d"]);
     }
@@ -335,6 +339,51 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("draft.md"), "{msg}");
         assert!(msg.contains("invalid file name 'my posts'"), "{msg}");
+    }
+
+    // AC-arch-3.1.3
+    #[test]
+    fn frontmatter_error_wins_over_invalid_file_name() {
+        for (i, extra) in ["\"tags\": [\"Rust\"]", "\"date\": \"2026-02-30\""]
+            .iter()
+            .enumerate()
+        {
+            let site = fixture_dir(&format!(
+                "frontmatter_error_wins_over_invalid_file_name_{i}"
+            ));
+            write_file(
+                &site.join("my posts/x.md"),
+                &format!(
+                    "---\n{{\"title\": \"t\", \"author\": \"a\", \"description\": \"d\", \"draft\": false, {extra}}}\n---\nbody\n"
+                ),
+            );
+
+            let err = load(&site).expect_err("both errors present");
+            assert!(
+                matches!(err, MangoError::Frontmatter(_)),
+                "{extra}: {err:?}"
+            );
+            let msg = err.to_string();
+            let value = if i == 0 { "'Rust'" } else { "'2026-02-30'" };
+            assert!(msg.contains(value), "{msg}");
+            assert!(!msg.contains("invalid file name"), "{msg}");
+        }
+    }
+
+    // AC-arch-3.8.1
+    #[test]
+    fn dot_only_file_name_is_rejected_even_for_drafts() {
+        let site = fixture_dir("dot_only_file_name_is_rejected_even_for_drafts");
+        write_file(&site.join("posts/...md"), &page("Draft", true));
+
+        let err = load(&site).expect_err("a dot-only file name must fail the load");
+        assert!(matches!(err, MangoError::General(_)), "{err:?}");
+        let msg = err.to_string();
+        assert!(msg.contains("...md"), "{msg}");
+        assert!(
+            msg.contains("invalid file name '..': a segment cannot consist only of dots"),
+            "{msg}"
+        );
     }
 
     // AC-11.1, AC-11.3
@@ -400,7 +449,11 @@ mod tests {
         write_file(&dir.join("shared/post.md"), &page("Shared", false));
         symlink(dir.join("shared/post.md"), site.join("posts/linked.md")).unwrap();
 
-        let mut slugs: Vec<_> = load(&site).unwrap().into_iter().map(|p| p.slug).collect();
+        let mut slugs: Vec<_> = load(&site)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.slug.to_string())
+            .collect();
         slugs.sort();
         // The slug comes from the link path, not from the link target.
         assert_eq!(slugs, ["posts/linked", "posts/real"]);
@@ -418,7 +471,11 @@ mod tests {
         write_file(&dir.join("shared/notes.txt"), "not a page");
         symlink(dir.join("shared/notes.txt"), site.join("posts/notes.txt")).unwrap();
 
-        let slugs: Vec<_> = load(&site).unwrap().into_iter().map(|p| p.slug).collect();
+        let slugs: Vec<_> = load(&site)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.slug.to_string())
+            .collect();
         assert_eq!(slugs, ["posts/real"]);
     }
 
@@ -434,7 +491,11 @@ mod tests {
         let link = dir.join("site");
         symlink(&real, &link).unwrap();
 
-        let slugs: Vec<_> = load(&link).unwrap().into_iter().map(|p| p.slug).collect();
+        let slugs: Vec<_> = load(&link)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.slug.to_string())
+            .collect();
         assert_eq!(slugs, ["posts/one"]);
     }
 
@@ -453,7 +514,7 @@ mod tests {
         let mut slugs: Vec<_> = load(&site)
             .expect("a dangling symlink must not fail the load")
             .into_iter()
-            .map(|p| p.slug)
+            .map(|p| p.slug.to_string())
             .collect();
         slugs.sort();
         assert_eq!(slugs, ["posts/real"]);
@@ -473,7 +534,7 @@ mod tests {
         let mut slugs: Vec<_> = load(&site)
             .expect("a symlink loop chain must not fail the load")
             .into_iter()
-            .map(|p| p.slug)
+            .map(|p| p.slug.to_string())
             .collect();
         slugs.sort();
         assert_eq!(slugs, ["real"]);

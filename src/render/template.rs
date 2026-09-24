@@ -6,10 +6,7 @@ use tera::Tera;
 
 use crate::{
     config::SiteConfig,
-    content::{
-        page::{Page, slug_url, tag_slug},
-        summary::PageSummary,
-    },
+    content::{page::Page, slug::Slug, summary::PageSummary, tag::Tag},
     error::MangoError,
     render::markdown::to_html,
 };
@@ -29,14 +26,14 @@ pub struct PageTemplate {
 /// A link to a tag page: `page.tags[]` entries.
 #[derive(Serialize, Debug)]
 pub struct TagLink {
-    pub name: String,
+    pub name: Tag,
     pub url: String,
 }
 
 impl TagLink {
-    pub fn new(name: String) -> Self {
+    pub fn new(name: Tag) -> Self {
         TagLink {
-            url: slug_url(&tag_slug(&name)),
+            url: name.url(),
             name,
         }
     }
@@ -45,15 +42,15 @@ impl TagLink {
 /// A tag listed on the tag index: `tags[]` entries.
 #[derive(Serialize, Debug)]
 pub struct TagIndexEntry {
-    pub name: String,
+    pub name: Tag,
     pub url: String,
     pub page_count: usize,
 }
 
 impl TagIndexEntry {
-    pub fn new(name: String, page_count: usize) -> Self {
+    pub fn new(name: Tag, page_count: usize) -> Self {
         TagIndexEntry {
-            url: slug_url(&tag_slug(&name)),
+            url: name.url(),
             name,
             page_count,
         }
@@ -62,7 +59,7 @@ impl TagIndexEntry {
 
 #[derive(Serialize)]
 struct TagTemplate {
-    name: String,
+    name: Tag,
     url: String,
     pages: Vec<PageSummary>,
 }
@@ -89,7 +86,7 @@ impl From<&Page> for PageTemplate {
             description: page.description.clone(),
             date: page.date,
             tags: page.tags.iter().cloned().map(TagLink::new).collect(),
-            url: slug_url(&page.slug),
+            url: page.slug.url(),
             content: String::new(),
         }
     }
@@ -97,7 +94,7 @@ impl From<&Page> for PageTemplate {
 
 #[derive(Serialize)]
 struct SectionTemplate {
-    slug: String,
+    slug: Slug,
     url: String,
     pages: Vec<PageSummary>,
     subsections: Vec<SectionLink>,
@@ -106,14 +103,14 @@ struct SectionTemplate {
 /// A link to a section: `section.subsections[]` entries.
 #[derive(Serialize, Debug)]
 pub struct SectionLink {
-    pub slug: String,
+    pub slug: Slug,
     pub url: String,
 }
 
 impl SectionLink {
-    pub fn new(slug: String) -> Self {
+    pub fn new(slug: Slug) -> Self {
         SectionLink {
-            url: slug_url(&slug),
+            url: slug.url(),
             slug,
         }
     }
@@ -122,15 +119,15 @@ impl SectionLink {
 /// A top-level section listed on the home page: `home.sections[]` entries.
 #[derive(Serialize, Debug)]
 pub struct HomeSection {
-    pub slug: String,
+    pub slug: Slug,
     pub url: String,
     pub page_count: usize,
 }
 
 impl HomeSection {
-    pub fn new(slug: String, page_count: usize) -> Self {
+    pub fn new(slug: Slug, page_count: usize) -> Self {
         HomeSection {
-            url: slug_url(&slug),
+            url: slug.url(),
             slug,
             page_count,
         }
@@ -144,7 +141,7 @@ struct HomeTemplate {
 }
 
 pub struct RenderItem {
-    pub slug: String,
+    pub slug: Slug,
     /// Human-readable origin, used in collision errors.
     pub source: String,
     pub template: String,
@@ -194,7 +191,7 @@ pub fn render_page(page: &Page, config: &SiteConfig) -> Result<RenderItem, Mango
 }
 
 pub fn render_section_page(
-    slug: String,
+    slug: Slug,
     pages: Vec<PageSummary>,
     subsections: Vec<SectionLink>,
     config: &SiteConfig,
@@ -202,7 +199,7 @@ pub fn render_section_page(
     use tera::Context;
     let mut context = Context::new();
     let template = SectionTemplate {
-        url: slug_url(&slug),
+        url: slug.url(),
         slug,
         pages,
         subsections,
@@ -230,7 +227,7 @@ pub fn render_home_page(
     context.insert("config", config);
 
     RenderItem {
-        slug: String::new(),
+        slug: Slug::home(),
         source: "home page".into(),
         template: "home.html".into(),
         context,
@@ -247,7 +244,7 @@ pub fn render_tag_index(entries: Vec<TagIndexEntry>, config: &SiteConfig) -> Ren
     context.insert("config", config);
 
     RenderItem {
-        slug: "tags".into(),
+        slug: Slug::tag_index(),
         source: "tag index".into(),
         template: "tags.html".into(),
         context,
@@ -256,13 +253,13 @@ pub fn render_tag_index(entries: Vec<TagIndexEntry>, config: &SiteConfig) -> Ren
 }
 
 /// One tag page item (`dist/tags/<name>/index.html`).
-pub fn render_tag_page(name: String, pages: Vec<PageSummary>, config: &SiteConfig) -> RenderItem {
+pub fn render_tag_page(tag: Tag, pages: Vec<PageSummary>, config: &SiteConfig) -> RenderItem {
     use tera::Context;
     let mut context = Context::new();
-    let slug = tag_slug(&name);
+    let slug = tag.slug();
     let template = TagTemplate {
-        url: slug_url(&slug),
-        name,
+        url: slug.url(),
+        name: tag,
         pages,
     };
     context.insert("tag", &template);
@@ -282,6 +279,10 @@ mod tests {
     use super::*;
     use crate::content::{frontmatter::MangoFrontmatter, page::PageType};
 
+    fn tag(name: &str) -> Tag {
+        Tag::parse(name.to_string()).unwrap()
+    }
+
     fn page_with(slug: &str, date: Option<&str>) -> Page {
         let fm = MangoFrontmatter {
             title: "Title".into(),
@@ -291,9 +292,14 @@ mod tests {
             tags: None,
             draft: false,
         };
-        let mut page = Page::new(fm, String::new(), PageType::General).unwrap();
-        page.slug = slug.into();
-        page
+        Page::new(
+            fm,
+            String::new(),
+            PageType::General,
+            Path::new(&format!("site/{slug}.md")),
+            Path::new("site"),
+        )
+        .unwrap()
     }
 
     // AC-5.1
@@ -307,7 +313,14 @@ mod tests {
             tags: None,
             draft: false,
         };
-        let page = Page::new(fm, "# Hi".into(), PageType::General).unwrap();
+        let page = Page::new(
+            fm,
+            "# Hi".into(),
+            PageType::General,
+            Path::new("site/posts/one.md"),
+            Path::new("site"),
+        )
+        .unwrap();
 
         let item = render_page(&page, &SiteConfig::default()).unwrap();
         let ctx = item.context.get("page").expect("page context missing");
@@ -356,12 +369,12 @@ mod tests {
     #[test]
     fn section_context_includes_config_url_and_subsections() {
         let item = render_section_page(
-            "a".into(),
+            Slug::from_test_text("a"),
             Vec::new(),
-            vec![SectionLink::new("a/b".into())],
+            vec![SectionLink::new(Slug::from_test_text("a/b"))],
             &SiteConfig::default(),
         );
-        assert_eq!(item.slug, "a");
+        assert_eq!(item.slug, Slug::from_test_text("a"));
         assert_eq!(item.source, "section index 'a'");
         let section = item.context.get("section").unwrap();
         assert_eq!(section["url"], "/a/");
@@ -371,15 +384,29 @@ mod tests {
         assert_eq!(item.context.get("config").unwrap()["recent_count"], 10);
     }
 
+    // AC-arch-3.4.3
+    #[test]
+    fn section_context_slug_is_plain_string() {
+        let item = render_section_page(
+            Slug::from_test_text("a"),
+            Vec::new(),
+            vec![SectionLink::new(Slug::from_test_text("a/b"))],
+            &SiteConfig::default(),
+        );
+        let section = item.context.get("section").unwrap();
+        assert_eq!(section["slug"], serde_json::json!("a"));
+        assert_eq!(section["subsections"][0]["slug"], serde_json::json!("a/b"));
+    }
+
     // AC-2.1, AC-1.11
     #[test]
     fn home_item_fields_and_context() {
         let item = render_home_page(
             Vec::new(),
-            vec![HomeSection::new("posts".into(), 3)],
+            vec![HomeSection::new(Slug::from_test_text("posts"), 3)],
             &SiteConfig::default(),
         );
-        assert_eq!(item.slug, "");
+        assert_eq!(item.slug, Slug::home());
         assert_eq!(item.source, "home page");
         assert_eq!(item.template, "home.html");
         let home = item.context.get("home").unwrap();
@@ -405,8 +432,14 @@ mod tests {
             ]),
             draft: false,
         };
-        let mut page = Page::new(fm, String::new(), PageType::General).unwrap();
-        page.slug = "posts/one".into();
+        let page = Page::new(
+            fm,
+            String::new(),
+            PageType::General,
+            Path::new("site/posts/one.md"),
+            Path::new("site"),
+        )
+        .unwrap();
 
         let item = render_page(&page, &SiteConfig::default()).unwrap();
         let tags = &item.context.get("page").unwrap()["tags"];
@@ -426,12 +459,12 @@ mod tests {
         let config = SiteConfig::default();
         let item = render_tag_index(
             vec![
-                TagIndexEntry::new("blog".into(), 2),
-                TagIndexEntry::new("rust".into(), 1),
+                TagIndexEntry::new(tag("blog"), 2),
+                TagIndexEntry::new(tag("rust"), 1),
             ],
             &config,
         );
-        assert_eq!(item.slug, "tags");
+        assert_eq!(item.slug, Slug::tag_index());
         assert_eq!(item.source, "tag index");
         assert_eq!(item.template, "tags.html");
         assert_eq!(item.page_date, None);
@@ -450,11 +483,11 @@ mod tests {
     fn tag_page_context_and_source() {
         let page = page_with("posts/one", Some("2026-01-24"));
         let item = render_tag_page(
-            "blog".into(),
+            tag("blog"),
             vec![PageSummary::from(&page)],
             &SiteConfig::default(),
         );
-        assert_eq!(item.slug, "tags/blog");
+        assert_eq!(item.slug.to_string(), "tags/blog");
         assert_eq!(item.source, "tag page 'blog'");
         assert_eq!(item.template, "tag.html");
         assert_eq!(item.page_date, None);

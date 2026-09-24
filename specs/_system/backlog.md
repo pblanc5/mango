@@ -12,7 +12,7 @@ Statuses: `open`, `done`, `dropped`. Sizes: **S** (one module, under a day), **M
 | [FEAT-2](#feat-2) | `publish`: dropped, never implemented | — | — | — | — | dropped |
 | [ARCH-1](#arch-1) | Split the build into plan and commit; add `lib.rs` | high | L | `/spec-feature` | — | done |
 | [ARCH-2](#arch-2) | One output model instead of three | high | L | `/spec-feature` | ARCH-1, ARCH-3 | open |
-| [ARCH-3](#arch-3) | `Slug` and `Tag` newtypes | high | M | `/spec-feature` | — | open |
+| [ARCH-3](#arch-3) | `Slug` and `Tag` newtypes | high | M | `/spec-feature` | — | done |
 | [ARCH-4](#arch-4) | Structured error variants instead of `General(String)` | medium | M | `/ship-feature` | — | open |
 | [ARCH-5](#arch-5) | Break up `render/template.rs` | medium | M | `/ship-feature` | ARCH-2 (easier after) | open |
 | [ARCH-6](#arch-6) | Tidy the `Page` model | medium | S | `/ship-feature` | — | open |
@@ -26,6 +26,7 @@ Statuses: `open`, `done`, `dropped`. Sizes: **S** (one module, under a day), **M
 | [RISK-3](#risk-3) | Raw HTML in content is trusted but undocumented | low | S | `/ship-feature` | — | open |
 | [RISK-4](#risk-4) | Unknown frontmatter keys are silently ignored | medium | S | `/spec-feature` | — | open |
 | [RISK-5](#risk-5) | Unresolvable symlinks under `site/` are silently ignored | low | S | `/ship-feature` | — | open |
+| [RISK-6](#risk-6) | Backslashes in file names become folder separators | low | S | `/spec-feature` | — | open |
 | [TEST-1](#test-1) | No test for CRLF line endings | low | S | `/ship-feature` | — | done |
 | [DOC-1](#doc-1) | Stale line references in the system overview | low | S | `/ship-feature` | — | open |
 
@@ -71,7 +72,7 @@ enum ItemKind { Page { date: Option<NaiveDate> }, Section, Home, TagIndex, Tag(T
 enum Body { Template { name: &'static str, context: tera::Context }, Text(String), Copy(PathBuf) }
 struct Output { path: OutputPath, kind: ItemKind, body: Body }
 ```
-Collision labels become `Display for ItemKind`; the sitemap selects `ItemKind::Page { date }`; collision checking, rendering and writing each work over one `Vec<Output>`.
+Collision labels become `Display for ItemKind`; the sitemap selects `ItemKind::Page { date }`; collision checking, rendering and writing each work over one `Vec<Output>`. Since ARCH-3, `Tag` is `content::tag::Tag` and output locations come from `content::slug::Slug` (`Slug::output_path`), which `OutputPath` can wrap or replace for the slug-addressed kinds.
 
 **Done when.**
 - `RenderItem`, `GeneratedFile` and `AssetFile` are replaced by one type; `source` strings and `page_date` are gone.
@@ -79,7 +80,7 @@ Collision labels become `Display for ItemKind`; the sitemap selects `ItemKind::P
 - The sitemap no longer depends on a field that exists only for it.
 
 ### ARCH-3
-**`Slug` and `Tag` newtypes** · high · M · `/spec-feature` · open
+**`Slug` and `Tag` newtypes** · high · M · `/spec-feature` · done
 
 **Problem.** Slugs are plain `String`s and their logic is spread across five files: construction and validation in `content/page.rs` (`generate_slug`, `slug_url`, `tag_slug`), path building in `build/output.rs` (`get_final_path`), parent lookup in `build/index/section.rs` (`extract_parent_slug` with `rsplit_once`), top-level detection in `build/generate/home.rs` (`!slug.contains('/')`), and URL building in `render/template.rs` (five `slug_url` calls). Tags are `String`s validated once and then trusted by convention.
 
@@ -89,6 +90,8 @@ Collision labels become `Display for ItemKind`; the sitemap selects `ItemKind::P
 - No module outside the `Slug`/`Tag` implementation splits, joins or formats slug strings.
 - An invalid slug or tag cannot be constructed.
 - Template contexts and output are byte-identical (the fixture and determinism tests pass unchanged).
+
+**Landed.** Two crate-private types in `src/content/` (spec `specs/arch-3/`). `Slug` (`slug.rs`) wraps the `/`-joined text; its field is private and its only constructors are `from_content_path` (the file-name validation), `parent()`, `Tag::slug`, the fixed `Slug::home()` and `Slug::tag_index()`, and a validating test-only `from_test_text`. It owns `url()`, `output_path(dist)`, `parent()`, `is_top_level()` and `segments()`, orders byte-wise on the joined text (`a-c` before `a/b`, as before) and serializes as the plain string, so template contexts are unchanged. `Tag` (`tag.rs`) is built only by `Tag::parse`/`parse_list` (validation plus de-duplication, same `Frontmatter` message) and provides `slug()` and `url()`. `generate_slug`, `slug_url`, `tag_slug`, `validate_tags`, `get_final_path`, `extract_parent_slug`, the `SectionSlug` alias, `!slug.contains('/')` and the literal `""`/`"tags"` slugs are gone. `Page::new` now takes the content path and site folder and validates date, tags, then slug, so a `Page` always has a valid slug and a frontmatter error still wins over a file-name error — this closes ARCH-6's two-phase-construction bullet. One user-visible change: a file-name segment made only of dots (`...md`, `posts/...md`, `..md`) used to be accepted and could write outside its folder (`posts/...md` silently overwrote the home page's `index.html`, since the collision check compares unresolved paths); it now fails before cleaning with `<file>: invalid file name '..': a segment cannot consist only of dots` (`tests/build.rs::build_fails_on_dot_only_file_name_keeping_output`). The backslash-to-`/` quirk was kept and is tracked as [RISK-6](#risk-6). Fixture output is byte-identical, no dependency was added and the library's public surface is unchanged.
 
 ### ARCH-4
 **Structured error variants instead of `General(String)`** · medium · M · `/ship-feature` · open
@@ -116,13 +119,13 @@ Collision labels become `Display for ItemKind`; the sitemap selects `ItemKind::P
 
 **Problem.**
 - `PageType::General` is the only variant and nothing reads `Page.kind`; under the no-dead-code rule it should go until a second page type exists.
-- Construction is two-phase: `Page::new` leaves `slug` empty and `generate_slug(&mut self)` fills it in later, so a `Page` without a slug can exist.
+- ~~Construction is two-phase: `Page::new` leaves `slug` empty and `generate_slug(&mut self)` fills it in later, so a `Page` without a slug can exist.~~ Done with ARCH-3: `Page::new(fm, content, kind, path, site)` builds the `Slug` in the same step.
 - `compare_summaries` (the listing order) lives in `build/index/section.rs` but is used by sections, tags, the home page and the feed; it is a content rule.
 - `home::recent_pages` builds `PageSummary`s only to sort them, then discards them, and `feed::build` re-checks `page.date` with an unreachable `continue`.
 
-**Proposal.** Remove `PageType`; construct `Page` from path + site + frontmatter in one step; move the ordering next to `Page` (sorting on `&Page` directly); have `recent_pages` return pages paired with their date so the feed needs no `let … else`.
+**Proposal.** Remove `PageType`; ~~construct `Page` from path + site + frontmatter in one step~~ (landed with ARCH-3); move the ordering next to `Page` (sorting on `&Page` directly); have `recent_pages` return pages paired with their date so the feed needs no `let … else`.
 
-**Done when.** No unused type or field remains on `Page`, every `Page` has a valid slug from construction, and ordering has one home.
+**Done when.** No unused type or field remains on `Page`, every `Page` has a valid slug from construction (already true since ARCH-3), and ordering has one home.
 
 ### ARCH-7
 **Smaller cleanups** · low · S · `/ship-feature` · open
@@ -233,6 +236,11 @@ pulldown-cmark passes raw HTML through and templates print `page.content | safe`
 **Unresolvable symlinks under `site/` are silently ignored** · low · S · `/ship-feature` · open
 
 An entry under `site/` whose target cannot be resolved — a dangling symlink, or a chain that loops (`a -> b -> a`) — is skipped without a word by `loader::traverse`, which is the behavior inherited from `path.is_dir()`/`path.is_file()` swallowing I/O errors. `assets::plan` already treats both as `io_at` build errors (RISK-2), so the two modules deliberately differ. Making the loader strict is a user-visible behavior change for existing sites and has no bearing on the runaway traversal, so it was deferred from RISK-1. Decide whether a broken or looping link under `site/` should fail the build (and whether a warning is enough), then align the two modules or record why they differ. `content/loader.rs::tests::load_ignores_dangling_symlink` and `load_ignores_symlink_loop_chain` pin the current behavior.
+
+### RISK-6
+**Backslashes in file names become folder separators** · low · S · `/spec-feature` · open
+
+`Slug::from_content_path` rewrites every `\` in the site-relative path to `/`, which is right on Windows (where `\` is a separator) but on Unix turns a single file literally named `a\b.md` into the slug `a/b`: it is published at `/a/b/` and creates a section `a` that has no folder, even though the file-name rule does not allow `\` in a name. This was kept unchanged by ARCH-3 and is pinned by `content::slug::tests::backslash_in_stem_becomes_separator`. Either reject `\` in a file name on platforms where it is not a separator (a user-visible strictness change, hence `/spec-feature`), or document the behavior in `README.md`.
 
 ### TEST-1
 **No test for CRLF line endings** · low · S · `/ship-feature` · done

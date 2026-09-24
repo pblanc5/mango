@@ -1,14 +1,17 @@
 use chrono::NaiveDate;
 use serde::Serialize;
 
-use crate::content::page::{Page, serialize_date, slug_url};
+use crate::content::{
+    page::{Page, serialize_date},
+    slug::Slug,
+};
 
 #[derive(Serialize, Debug)]
 pub struct PageSummary {
     pub title: String,
     #[serde(serialize_with = "serialize_date")]
     pub date: Option<NaiveDate>,
-    pub slug: String,
+    pub slug: Slug,
     pub url: String,
 }
 
@@ -18,7 +21,7 @@ impl From<&Page> for PageSummary {
             title: page.title.clone(),
             date: page.date,
             slug: page.slug.clone(),
-            url: slug_url(&page.slug),
+            url: page.slug.url(),
         }
     }
 }

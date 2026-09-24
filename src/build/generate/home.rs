@@ -29,7 +29,7 @@ pub fn build(pages: &[Page], si: &SectionIndex, config: &SiteConfig) -> RenderIt
     let sections = si
         .sections
         .iter()
-        .filter(|(slug, _)| !slug.contains('/'))
+        .filter(|(slug, _)| slug.is_top_level())
         .map(|(slug, section)| HomeSection::new(slug.clone(), section.pages.len()))
         .collect();
 
@@ -41,8 +41,9 @@ mod tests {
     use super::*;
     use crate::{
         build::index::section::build_section_index,
-        content::{frontmatter::MangoFrontmatter, page::PageType},
+        content::{frontmatter::MangoFrontmatter, page::PageType, slug::Slug},
     };
+    use std::path::Path;
 
     fn page_with(slug: &str, title: &str, date: Option<&str>) -> Page {
         let fm = MangoFrontmatter {
@@ -53,9 +54,14 @@ mod tests {
             tags: None,
             draft: false,
         };
-        let mut page = Page::new(fm, String::new(), PageType::General).unwrap();
-        page.slug = slug.to_string();
-        page
+        Page::new(
+            fm,
+            String::new(),
+            PageType::General,
+            Path::new(&format!("site/{slug}.md")),
+            Path::new("site"),
+        )
+        .unwrap()
     }
 
     fn home_for(pages: &[Page], config: &SiteConfig) -> RenderItem {
@@ -75,7 +81,7 @@ mod tests {
     #[test]
     fn home_item_has_empty_slug_and_source() {
         let item = home_for(&[], &SiteConfig::default());
-        assert_eq!(item.slug, "");
+        assert_eq!(item.slug, Slug::home());
         assert_eq!(item.source, "home page");
         assert_eq!(item.template, "home.html");
         assert!(item.context.get("config").is_some());
@@ -139,7 +145,7 @@ mod tests {
             };
             let shared: Vec<String> = recent_pages(&pages, count)
                 .iter()
-                .map(|p| p.slug.clone())
+                .map(|p| p.slug.to_string())
                 .collect();
             assert_eq!(shared, recent_slugs(&home_for(&pages, &config)), "{count}");
         }

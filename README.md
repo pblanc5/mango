@@ -65,7 +65,7 @@ Markdown body.
 
 Content files may use LF or CRLF line endings, or a mix of the two: a page written on Windows and its Unix twin build to byte-identical output. Templates and assets are not normalized — whatever line endings they have is what lands in `dist/`.
 
-File and folder names may only use ASCII letters, digits, `-`, `_` and `.`, so every URL is valid without encoding. `site/posts/post_one.md` becomes `/posts/post_one/`.
+File and folder names may only use ASCII letters, digits, `-`, `_` and `.`, so every URL is valid without encoding. `site/posts/post_one.md` becomes `/posts/post_one/`. A folder name or file name (without its extension) made only of dots, such as `...md`, is rejected, since it would publish the page outside its folder.
 
 Markdown supports tables, footnotes, strikethrough, task lists and explicit heading IDs (`## Title {#my-id}`).
 

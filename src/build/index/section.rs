@@ -3,39 +3,37 @@ use std::{
     collections::{BTreeMap, BTreeSet},
 };
 
-use crate::content::{page::Page, summary::PageSummary};
-
-pub type SectionSlug = String;
+use crate::content::{page::Page, slug::Slug, summary::PageSummary};
 
 #[derive(Default, Debug)]
 pub struct Section {
     /// Direct child pages, sorted with `compare_summaries`.
     pub pages: Vec<PageSummary>,
     /// Direct child section slugs, sorted.
-    pub subsections: Vec<SectionSlug>,
+    pub subsections: Vec<Slug>,
 }
 
 #[derive(Default)]
 pub struct SectionIndex {
     /// Ordered by section slug so output is generated in a fixed order.
-    pub sections: BTreeMap<SectionSlug, Section>,
+    pub sections: BTreeMap<Slug, Section>,
 }
 
 /// Every ancestor folder of a page is a section (`a/b/c` gives `a/b` and
 /// `a`). Top-level pages belong to no section; the root is the home page.
 pub fn build_section_index(pages: &[Page]) -> SectionIndex {
-    let mut pages_by_section: BTreeMap<SectionSlug, Vec<PageSummary>> = BTreeMap::new();
-    let mut subsections: BTreeMap<SectionSlug, BTreeSet<SectionSlug>> = BTreeMap::new();
+    let mut pages_by_section: BTreeMap<Slug, Vec<PageSummary>> = BTreeMap::new();
+    let mut subsections: BTreeMap<Slug, BTreeSet<Slug>> = BTreeMap::new();
 
     for summary in pages.iter().map(PageSummary::from) {
-        let Some(parent) = extract_parent_slug(&summary.slug) else {
+        let Some(parent) = summary.slug.parent() else {
             continue;
         };
 
         let mut child = parent.clone();
         pages_by_section.entry(parent).or_default().push(summary);
 
-        while let Some(ancestor) = extract_parent_slug(&child) {
+        while let Some(ancestor) = child.parent() {
             subsections
                 .entry(ancestor.clone())
                 .or_default()
@@ -70,14 +68,11 @@ pub(crate) fn compare_summaries(a: &PageSummary, b: &PageSummary) -> Ordering {
         .then_with(|| a.slug.cmp(&b.slug))
 }
 
-fn extract_parent_slug(slug: &str) -> Option<String> {
-    slug.rsplit_once('/').map(|(p, _)| p.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::content::{frontmatter::MangoFrontmatter, page::PageType};
+    use std::path::Path;
 
     fn page_with(slug: &str, title: &str, date: Option<&str>) -> Page {
         let fm = MangoFrontmatter {
@@ -88,20 +83,41 @@ mod tests {
             tags: None,
             draft: false,
         };
-        let mut page = Page::new(fm, String::new(), PageType::General).unwrap();
-        page.slug = slug.to_string();
-        page
+        Page::new(
+            fm,
+            String::new(),
+            PageType::General,
+            Path::new(&format!("site/{slug}.md")),
+            Path::new("site"),
+        )
+        .unwrap()
     }
 
     fn page_with_slug(slug: &str) -> Page {
         page_with(slug, slug, None)
     }
 
-    fn slugs(si: &SectionIndex, section: &str) -> Vec<String> {
-        si.sections[section]
+    fn section<'a>(si: &'a SectionIndex, slug: &str) -> &'a Section {
+        &si.sections[&Slug::from_test_text(slug)]
+    }
+
+    fn keys(si: &SectionIndex) -> Vec<String> {
+        si.sections.keys().map(Slug::to_string).collect()
+    }
+
+    fn subsections(si: &SectionIndex, slug: &str) -> Vec<String> {
+        section(si, slug)
+            .subsections
+            .iter()
+            .map(Slug::to_string)
+            .collect()
+    }
+
+    fn slugs(si: &SectionIndex, slug: &str) -> Vec<String> {
+        section(si, slug)
             .pages
             .iter()
-            .map(|s| s.slug.clone())
+            .map(|s| s.slug.to_string())
             .collect()
     }
 
@@ -116,9 +132,9 @@ mod tests {
         let si = build_section_index(&pages);
 
         assert_eq!(si.sections.len(), 2);
-        assert_eq!(si.sections["posts"].pages.len(), 2);
-        assert_eq!(si.sections["projects"].pages.len(), 1);
-        assert_eq!(si.sections["projects"].pages[0].slug, "projects/mango");
+        assert_eq!(section(&si, "posts").pages.len(), 2);
+        assert_eq!(section(&si, "projects").pages.len(), 1);
+        assert_eq!(slugs(&si, "projects"), ["projects/mango"]);
     }
 
     // AC-3.1
@@ -126,13 +142,6 @@ mod tests {
     fn top_level_pages_are_not_indexed() {
         let si = build_section_index(&[page_with_slug("about")]);
         assert!(si.sections.is_empty());
-    }
-
-    #[test]
-    fn extract_parent_slug_uses_last_separator() {
-        assert_eq!(extract_parent_slug("a/b/c"), Some("a/b".to_string()));
-        assert_eq!(extract_parent_slug("posts/one"), Some("posts".to_string()));
-        assert_eq!(extract_parent_slug("about"), None);
     }
 
     // AC-2.1, AC-2.5
@@ -196,8 +205,17 @@ mod tests {
         ];
 
         let si = build_section_index(&pages);
-        let keys: Vec<_> = si.sections.keys().map(String::as_str).collect();
-        assert_eq!(keys, ["a", "a/b", "posts", "projects"]);
+        assert_eq!(keys(&si), ["a", "a/b", "posts", "projects"]);
+    }
+
+    // AC-arch-3.3.1: full-text byte order, so `a-c` ('-' is 0x2D) sorts
+    // before `a/b` ('/' is 0x2F); a segment-wise order would not.
+    #[test]
+    fn sections_order_bytewise_not_by_segment() {
+        let pages = vec![page_with_slug("a/b/x"), page_with_slug("a-c/x")];
+
+        let si = build_section_index(&pages);
+        assert_eq!(keys(&si), ["a", "a-c", "a/b"]);
     }
 
     // AC-1.5
@@ -209,7 +227,7 @@ mod tests {
         ];
 
         let si = build_section_index(&pages);
-        let json = serde_json::to_value(&si.sections["posts"].pages).unwrap();
+        let json = serde_json::to_value(&section(&si, "posts").pages).unwrap();
         assert_eq!(json[0]["date"], "2026-01-24");
         assert_eq!(json[1]["date"], "");
     }
@@ -218,18 +236,20 @@ mod tests {
     #[test]
     fn ancestors_get_section_entries() {
         let si = build_section_index(&[page_with_slug("a/b/c")]);
-        let keys: Vec<_> = si.sections.keys().map(String::as_str).collect();
-        assert_eq!(keys, ["a", "a/b"]);
+        assert_eq!(keys(&si), ["a", "a/b"]);
         assert_eq!(slugs(&si, "a/b"), ["a/b/c"]);
-        assert!(!si.sections.contains_key(""), "root is never a section");
+        assert!(
+            !si.sections.contains_key(&Slug::home()),
+            "root is never a section"
+        );
     }
 
     // AC-3.2
     #[test]
     fn section_with_only_subsections_has_empty_pages() {
         let si = build_section_index(&[page_with_slug("a/b/c")]);
-        assert!(si.sections["a"].pages.is_empty());
-        assert_eq!(si.sections["a"].subsections, ["a/b"]);
+        assert!(section(&si, "a").pages.is_empty());
+        assert_eq!(subsections(&si, "a"), ["a/b"]);
     }
 
     // AC-3.2, AC-3.3
@@ -243,10 +263,10 @@ mod tests {
         ];
 
         let si = build_section_index(&pages);
-        assert_eq!(si.sections["a"].subsections, ["a/b", "a/d"]);
-        assert_eq!(si.sections["a/b"].subsections, ["a/b/x"]);
-        assert!(si.sections["a/d"].subsections.is_empty());
-        assert!(si.sections["a/b/x"].subsections.is_empty());
+        assert_eq!(subsections(&si, "a"), ["a/b", "a/d"]);
+        assert_eq!(subsections(&si, "a/b"), ["a/b/x"]);
+        assert!(section(&si, "a/d").subsections.is_empty());
+        assert!(section(&si, "a/b/x").subsections.is_empty());
         assert_eq!(slugs(&si, "a"), ["a/top"]);
         assert_eq!(slugs(&si, "a/b"), ["a/b/c"]);
     }
@@ -255,7 +275,7 @@ mod tests {
     #[test]
     fn summary_serializes_url() {
         let si = build_section_index(&[page_with_slug("posts/post_one")]);
-        let json = serde_json::to_value(&si.sections["posts"].pages).unwrap();
+        let json = serde_json::to_value(&section(&si, "posts").pages).unwrap();
         assert_eq!(json[0]["url"], "/posts/post_one/");
     }
 }

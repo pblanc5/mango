@@ -1990,6 +1990,39 @@ fn build_fails_on_invalid_file_name_naming_file() {
     }
 }
 
+// AC-arch-3.8.1, AC-arch-3.8.2: `...md` has the stem `..`, which used to
+// write `dist/../index.html`, outside the output folder.
+#[test]
+fn build_fails_on_dot_only_file_name_keeping_output() {
+    let dir = temp_dir("build_fails_on_dot_only_file_name_keeping_output");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    write_file(&site.join("posts/one.md"), &page("One", false));
+
+    assert_success(&build_temp_site(&site, &out));
+    write_file(&out.join("marker.txt"), "keep me");
+    let before = snapshot(&out);
+    let home_before = fs::read(out.join("index.html")).unwrap();
+
+    write_file(&site.join("...md"), &page("Dots", false));
+    let output = build_temp_site(&site, &out);
+
+    assert_failure(&output, "dot-only file name");
+    let err = stderr(&output);
+    assert!(err.contains("...md"), "{err}");
+    assert!(err.contains("'..'"), "{err}");
+    assert!(
+        err.contains("a segment cannot consist only of dots"),
+        "{err}"
+    );
+    assert_eq!(snapshot(&out), before, "output changed");
+    assert_eq!(fs::read(out.join("index.html")).unwrap(), home_before);
+    assert!(
+        !dir.join("index.html").exists(),
+        "nothing written outside dist"
+    );
+}
+
 #[test]
 fn build_accepts_utf8_bom_before_frontmatter() {
     let dir = temp_dir("build_accepts_utf8_bom_before_frontmatter");

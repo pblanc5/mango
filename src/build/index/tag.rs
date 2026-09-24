@@ -2,14 +2,14 @@ use std::collections::BTreeMap;
 
 use crate::{
     build::index::section::compare_summaries,
-    content::{page::Page, summary::PageSummary},
+    content::{page::Page, summary::PageSummary, tag::Tag},
 };
 
 /// Pages grouped by tag, ordered by tag name. Each tag's pages are sorted
 /// with `compare_summaries` (newest first, undated last). `pages` must
 /// already be draft-filtered.
-pub fn build_tag_index(pages: &[Page]) -> BTreeMap<String, Vec<PageSummary>> {
-    let mut index: BTreeMap<String, Vec<PageSummary>> = BTreeMap::new();
+pub fn build_tag_index(pages: &[Page]) -> BTreeMap<Tag, Vec<PageSummary>> {
+    let mut index: BTreeMap<Tag, Vec<PageSummary>> = BTreeMap::new();
 
     for page in pages {
         for tag in &page.tags {
@@ -31,6 +31,7 @@ pub fn build_tag_index(pages: &[Page]) -> BTreeMap<String, Vec<PageSummary>> {
 mod tests {
     use super::*;
     use crate::content::{frontmatter::MangoFrontmatter, page::PageType};
+    use std::path::Path;
 
     fn page_with(slug: &str, title: &str, date: Option<&str>, tags: &[&str]) -> Page {
         let fm = MangoFrontmatter {
@@ -41,13 +42,22 @@ mod tests {
             tags: Some(tags.iter().map(|t| t.to_string()).collect()),
             draft: false,
         };
-        let mut page = Page::new(fm, String::new(), PageType::General).unwrap();
-        page.slug = slug.to_string();
-        page
+        Page::new(
+            fm,
+            String::new(),
+            PageType::General,
+            Path::new(&format!("site/{slug}.md")),
+            Path::new("site"),
+        )
+        .unwrap()
     }
 
-    fn slugs(summaries: &[PageSummary]) -> Vec<&str> {
-        summaries.iter().map(|s| s.slug.as_str()).collect()
+    fn slugs(summaries: &[PageSummary]) -> Vec<String> {
+        summaries.iter().map(|s| s.slug.to_string()).collect()
+    }
+
+    fn tag(name: &str) -> Tag {
+        Tag::parse(name.to_string()).unwrap()
     }
 
     // AC-2.1 (batch 4)
@@ -62,11 +72,11 @@ mod tests {
         ];
 
         let index = build_tag_index(&pages);
-        let keys: Vec<_> = index.keys().map(String::as_str).collect();
+        let keys: Vec<_> = index.keys().map(Tag::to_string).collect();
         assert_eq!(keys, ["blog", "rust"]);
-        assert_eq!(slugs(&index["blog"]), ["posts/new", "posts/old"]);
+        assert_eq!(slugs(&index[&tag("blog")]), ["posts/new", "posts/old"]);
         assert_eq!(
-            slugs(&index["rust"]),
+            slugs(&index[&tag("rust")]),
             ["projects/a", "projects/b", "posts/old"]
         );
     }
@@ -82,7 +92,7 @@ mod tests {
 
         let index = build_tag_index(&pages);
         assert_eq!(
-            slugs(&index["blog"]),
+            slugs(&index[&tag("blog")]),
             ["posts/new", "posts/old", "posts/undated"]
         );
     }
@@ -97,7 +107,7 @@ mod tests {
     #[test]
     fn summaries_have_no_tags_key() {
         let index = build_tag_index(&[page_with("a/b", "A", None, &["blog"])]);
-        let json = serde_json::to_value(&index["blog"]).unwrap();
+        let json = serde_json::to_value(&index[&tag("blog")]).unwrap();
         assert!(json[0].get("tags").is_none(), "{json}");
         assert_eq!(json[0]["url"], "/a/b/");
     }
