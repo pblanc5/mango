@@ -10,6 +10,7 @@ Statuses: `open`, `done`, `dropped`. Sizes: **S** (one module, under a day), **M
 |---|---|---|---|---|---|---|
 | [FEAT-1](#feat-1) | Dev server (`run`) | medium | L | `/spec-feature` | ARCH-1, a dependency approval | open |
 | [FEAT-2](#feat-2) | `publish`: dropped, never implemented | — | — | — | — | dropped |
+| [FEAT-3](#feat-3) | Agent skill for using mango as a tool | medium | M | `/spec-feature` | — | open |
 | [ARCH-1](#arch-1) | Split the build into plan and commit; add `lib.rs` | high | L | `/spec-feature` | — | done |
 | [ARCH-2](#arch-2) | One output model instead of three | high | L | `/spec-feature` | ARCH-1, ARCH-3 | done |
 | [ARCH-3](#arch-3) | `Slug` and `Tag` newtypes | high | M | `/spec-feature` | — | done |
@@ -32,7 +33,7 @@ Statuses: `open`, `done`, `dropped`. Sizes: **S** (one module, under a day), **M
 | [TEST-1](#test-1) | No test for CRLF line endings | low | S | `/ship-feature` | — | done |
 | [DOC-1](#doc-1) | Stale line references in the system overview | low | S | `/ship-feature` | — | open |
 
-Recommended order: ARCH-1 → ARCH-3 → ARCH-2, then ARCH-4 to ARCH-7 in any order. FEAT-1 comes after ARCH-1, which gives it the seam it needs; FEAT-2 is closed as dropped. The RISK and TEST items are independent and can be done at any time.
+Recommended order: ARCH-1 → ARCH-3 → ARCH-2, then ARCH-4 to ARCH-7 in any order. FEAT-1 comes after ARCH-1, which gives it the seam it needs; FEAT-2 is closed as dropped. FEAT-3 is independent and can be done at any time; if it lands before FEAT-1, FEAT-1 updates it. The RISK and TEST items are independent and can be done at any time.
 
 ---
 
@@ -169,6 +170,22 @@ Product-level work, as opposed to the refactoring that makes up the rest of this
 **Why dropped rather than specified.** Every plausible reading — commit `dist/` to a `gh-pages`-style branch, rsync or SFTP to a host, upload to object storage, call a host's deploy API — puts mango into the credential-handling and deployment business, needs at least one new dependency against a standing non-negotiable, and duplicates tooling site authors already have. The one reading that avoided all of that, shelling out to a command configured in `mango.json`, is a wrapper thin enough that the author can just run the command. mango's job ends at a correct, deterministic `dist/`.
 
 **Pinned by** `publish_is_not_a_command` in `tests/build.rs`, which asserts the command is rejected as unknown, that the old stub error is gone, and that `--help` no longer advertises it. If publishing is ever wanted, it starts as a new item with a decided scope, not as a resurrected stub.
+
+### FEAT-3
+**Agent skill for using mango as a tool** · medium · M · `/spec-feature` · open
+
+**Problem.** An AI agent asked to build or edit a mango site has only `README.md`, which is written for people, and `--help`, which lists flags but none of the rules that make a build fail. The failure modes an agent is most likely to hit are exactly the ones mango is strict about: CLI paths resolve against the current working directory, frontmatter is JSON rather than YAML, `title`/`author`/`description`/`draft` are required, dates must be `YYYY-MM-DD`, tags are lowercase ASCII with single hyphens, file names allow only `[A-Za-z0-9._-]`, `/tags/` is reserved, and five templates are required. Each one costs a failed build and a guess. A skill file (a `SKILL.md` with frontmatter `name` and `description`, in the Agent Skills format Claude Code loads) would give an agent those rules, the commands and the fix for each error up front.
+
+**Not the same thing as `.claude/`.** Everything under `.claude/` is for agents working **on** mango's code. This skill is for agents **using** mango to build a site, usually in some other repository, so it is product surface, not dev tooling.
+
+**Settle these in the spec, before writing it.**
+- **Where it lives and how it reaches users.** A folder shipped in this repo (e.g. `skills/mango/SKILL.md`) for users to copy into their own `.claude/skills/`, a plugin, or a `mango` subcommand that prints or installs it. Printing it from the binary keeps it in step with the installed version, but it is new CLI surface.
+- **What it covers.** At least: the commands and the cwd-relative path rule; the site layout; the frontmatter format and every content rule, with a valid example page; `mango.json` fields; the template names and each template's context; the output URLs; the "a failed build leaves the previous output untouched" guarantee; a table mapping each error message to its fix. Whether to split it into a short `SKILL.md` plus reference files that are loaded only when needed (e.g. the template contexts), so the part that is always loaded stays small.
+- **Keeping it true.** The content rules are already written in `README.md` and `CLAUDE.md`, and a third copy drifts. Options: a test that checks the skill against the code (every CLI flag, every config field, every template name appears in it, and every example page and command in it builds), generating the skill from `README.md`, or making the skill the single source that `README.md` links to.
+- **Proving it works.** Whether the evaluation is only static (the example site in the skill builds, via a `tests/build.rs` test) or also a manual trial in which an agent with only the skill builds a small site from a prompt, recorded in the spec.
+- **What it does not do.** No new behavior in mango itself, such as machine-readable (`--json`) errors; if the spec finds one is needed, it becomes its own item.
+
+**Done when.** The skill is in the repo at the path the spec picks, with the frontmatter the format requires and a `description` that names when to use it. It covers everything listed above. A test fails if a CLI flag, config field or required template is missing from it, or if its example site no longer builds. `README.md` tells site authors it exists and how to install it.
 
 ---
 
