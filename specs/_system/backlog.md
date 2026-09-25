@@ -17,7 +17,7 @@ Statuses: `open`, `done`, `dropped`. Sizes: **S** (one module, under a day), **M
 | [ARCH-5](#arch-5) | Break up `render/template.rs` | medium | M | `/ship-feature` | ARCH-2 (easier after) | open |
 | [ARCH-6](#arch-6) | Tidy the `Page` model | medium | S | `/ship-feature` | — | open |
 | [ARCH-7](#arch-7) | Smaller cleanups: frontmatter return type, CLI path types | low | S | `/ship-feature` | — | open |
-| [OPS-1](#ops-1) | Continuous integration | medium | S | `/ship-feature` | a git remote | open |
+| [OPS-1](#ops-1) | Continuous integration | medium | S | `/ship-feature` | a git remote | done |
 | [SPEC-1](#spec-1) | Confirm the constitution's open proposals | medium | S | manual | — | done |
 | [SPEC-2](#spec-2) | Publish the legacy acceptance criteria into tracked specs | medium | M | `/ship-feature` | — | done |
 | [SPEC-3](#spec-3) | Rewrite the legacy AC tags into spec-scoped form | low | M | `/ship-feature` | ARCH-1 | open |
@@ -175,9 +175,11 @@ Product-level work, as opposed to the refactoring that makes up the rest of this
 ## Operations and specs
 
 ### OPS-1
-**Continuous integration** · medium · S · `/ship-feature` · depends on a git remote · open
+**Continuous integration** · medium · S · `/ship-feature` · depends on a git remote · done
 
 No CI exists because the repository has no remote. Once one is added, run the definition-of-done gate (`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`) on every push, on Linux and Windows (the code has Windows-specific paths in slug handling and `clean_contents`).
+
+**Landed.** `.github/workflows/ci.yml` runs the gate as three separate steps (`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`) on every `push` and `pull_request`, with no branch filters, in a matrix over `ubuntu-latest` and `windows-latest` with `fail-fast: false`, so both results are always reported. The toolchain comes only from `rust-toolchain.toml` (`rustup toolchain install` with no arguments, then `rustup show`); the workflow names no version. A step before checkout sets `git config --global core.autocrlf false`, so the Windows checkout keeps the committed LF line endings the byte-exact fixture tests expect. The workflow has read-only permissions (`contents: read`), uses no secrets, a 30-minute timeout, and no action but `actions/checkout@v5`. The remote itself (`https://github.com/pblanc5/mango`, private, default `master`) was added by hand on 2026-09-24, not by this item. No dependency was added. The suite had never run on Windows before this change. The first Windows run failed `build_reports_first_failure_in_pipeline_order`: the test built its expected path as `site.join("posts/one.md")`, which on Windows is `…\site\posts/one.md`, while mango correctly prints the native `…\site\posts\one.md`. Seven assertions in `tests/plan.rs` had the same flaw but had not run yet, because `cargo test` stops at the first failing test binary. Output paths are built one segment at a time and asset labels normalize to `/`, so the product was right. The fix, made in the same change at the maintainer's request, builds every expected path one segment at a time (`.join("posts").join("one.md")`); joins that only create files keep their `/`, which Windows accepts.
 
 ### SPEC-1
 **Confirm the constitution's open proposals** · medium · S · manual · done

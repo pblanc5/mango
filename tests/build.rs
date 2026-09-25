@@ -2228,7 +2228,7 @@ fn build_reports_first_failure_in_pipeline_order() {
     let config = dir.join("bad.json");
     let templates = dir.join("no-templates");
     let assets = dir.join("no-assets");
-    let bad_page = site.join("posts/one.md");
+    let bad_page = site.join("posts").join("one.md");
 
     write_file(&bad_page, "# No frontmatter here\n");
     write_file(&config, "{not valid json");
