@@ -50,14 +50,16 @@ Check all of the following. Collect **every** problem and stop if there are any.
 3. **At least one gate.** At least one stage has `gate: human`.
 4. **Read-only before approval.** Every stage up to and including the first gated stage uses a read-only persona. Name each one that doesn't.
 5. **Inputs.** Every entry in `inputs` names an **earlier** stage.
-6. **Loops.** Every `on_fail` and `on_changes_requested` has:
+6. **Loops.** Every `on_fail`, `on_changes_requested` and `on_design_changes` has:
    - a `goto` pointing to the **same or an earlier** stage
    - a positive integer `max_attempts`
+
+   An `on_design_changes` `goto` must also point to a stage with `gate: human`, so an amended design is always approved again before anything after it runs.
 7. **`publish_to`, if present:**
    - a relative path using `/`, with no `..`, not absolute, and not starting with `.claude/` or `.dev-pipeline/`
    - the only placeholders allowed are `{spec_id}` and `{run_id}`
    - a gated stage must exist at or after this stage, otherwise it could never be published
-8. **Stage keys.** No keys other than `id`, `persona`, `inputs`, `gate`, `on_fail`, `on_changes_requested`, `notes`, `publish_to`.
+8. **Stage keys.** No keys other than `id`, `persona`, `inputs`, `gate`, `on_fail`, `on_changes_requested`, `on_design_changes`, `notes`, `publish_to`.
 
 ## 3. Start the run
 1. **Run id.** `run_id` = `<YYYYMMDD-HHMMSS>-<slug>`. This computes a string; it writes nothing, and the gate in step 3.2 needs the slug to recognise a resume.
@@ -171,6 +173,7 @@ Do your job as described in your instructions. Return your artifact document as 
 
    Extra requirements:
    - If `S.publish_to` contains `{spec_id}`, the frontmatter must also have `spec_id` matching `^[a-z0-9]+(-[a-z0-9]+)*$`.
+   - `route`, if present, must be `design`, and only with `verdict: changes-requested`.
    - If S has `publish_to`, the body must contain a `## Pipeline notes` heading. Everything above it is the document that gets published.
 
    The reply is also invalid if its body clearly contradicts its verdict, such as reported failures with `verdict: pass`.
@@ -200,7 +203,7 @@ Do your job as described in your instructions. Return your artifact document as 
    2. `blocked`: stop with reason `blocked`.
    3. `pass` on a `gate: human` stage: go to step 5.
    4. `pass` on any other stage: set `current_stage` to the next stage and repeat step 4. If S was the last stage, finish (step 7).
-   5. `fail` or `changes-requested`: use the matching handler, `on_fail` or `on_changes_requested`.
+   5. `fail` or `changes-requested`: use the matching handler, `on_fail` or `on_changes_requested`. A `changes-requested` with `route: design` uses `on_design_changes` instead: the design stage re-runs with this artifact as its `feedback`, stops at its gate for approval, and the stages after it run again from there.
       - If there is no handler, stop with reason `unhandled_verdict`.
       - Otherwise use loop key `<S>.<handler>`. If `loops[key] >= max_attempts`, stop with reason `loop_cap`.
       - Otherwise increment `loops[key]`, set `pending.feedback` to this artifact's path, set `current_stage` to the handler's `goto`, save state, and repeat step 4. Execution then moves forward from the `goto` stage again.
