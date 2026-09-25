@@ -26,7 +26,7 @@ Statuses: `open`, `done`, `dropped`. Sizes: **S** (one module, under a day), **M
 | [RISK-1](#risk-1) | Symlink loops in the site folder | medium | S | `/ship-feature` | — | done |
 | [RISK-2](#risk-2) | Symlinked folders inside the assets folder | medium | S | `/ship-feature` | — | done |
 | [RISK-3](#risk-3) | Raw HTML in content is trusted but undocumented | low | S | `/ship-feature` | — | open |
-| [RISK-4](#risk-4) | Unknown frontmatter keys are silently ignored | medium | S | `/spec-feature` | — | open |
+| [RISK-4](#risk-4) | Unknown frontmatter keys are silently ignored | medium | S | `/spec-feature` | — | done |
 | [RISK-5](#risk-5) | Unresolvable symlinks under `site/` are silently ignored | low | S | `/ship-feature` | — | open |
 | [RISK-6](#risk-6) | Backslashes in file names become folder separators | low | S | `/spec-feature` | — | open |
 | [RISK-7](#risk-7) | Asset-copy errors name the source, not the destination | low | S | `/ship-feature` | — | open |
@@ -261,9 +261,9 @@ Source: `specs/_system/overview.md`, "Risky areas" (items marked **Inferred, con
 pulldown-cmark passes raw HTML through and templates print `page.content | safe`, so content authors can inject any HTML. That is normal for a static site generator, but `README.md` does not say so. Document it under "Known limitations" (or add an option to strip raw HTML if untrusted content is ever a use case).
 
 ### RISK-4
-**Unknown frontmatter keys are silently ignored** · medium · S · `/spec-feature` · open
+**Unknown frontmatter keys are silently ignored** · medium · S · `/spec-feature` · done
 
-`MangoFrontmatter` lacks `deny_unknown_fields` (unlike `SiteConfig`), so a typo such as `"tag"` or `"dates"` is dropped without warning. Making it strict is a user-visible behavior change for existing sites, so specify it: which fields exist, the error message, and whether drafts are checked.
+`MangoFrontmatter` lacks `deny_unknown_fields` (unlike `SiteConfig`), so a typo such as `"tag"` or `"dates"` is dropped without warning. Making it strict is a user-visible behavior change for existing sites, so specify it: which fields exist, the error message, and whether drafts are checked. Resolved by `specs/risk-4/`: `frontmatter::check_keys` rejects any key other than the six fields, drafts included, with one `Frontmatter` error per page listing every unknown key (sorted) and every missing required key, plus the accepted keys; key errors take precedence over wrong types, dates, tags and file names. Breaking, recorded in `CHANGELOG.md` for 0.2.0. `tests/build.rs::build_fails_on_unknown_frontmatter_keys_keeping_output` proves the previous output survives.
 
 ### RISK-5
 **Unresolvable symlinks under `site/` are silently ignored** · low · S · `/ship-feature` · open

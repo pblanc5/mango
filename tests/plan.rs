@@ -569,6 +569,12 @@ fn draft_with_bad_frontmatter_date_or_tag_fails_planning() {
             frontmatter("Tagged", None, Some(r#"["Rust"]"#), true),
             Some("Rust"),
         ),
+        // AC-risk-4.3.3: an unknown key fails a draft too.
+        (
+            "unknown key",
+            "---\n{\"title\": \"Draft\", \"author\": \"a\", \"description\": \"d\", \"draft\": true, \"dates\": \"2026-01-24\"}\n---\n# Draft\n".to_string(),
+            Some("unknown 'dates'"),
+        ),
     ];
 
     for (label, body, value) in cases {
