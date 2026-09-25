@@ -11,6 +11,7 @@ Statuses: `open`, `done`, `dropped`. Sizes: **S** (one module, under a day), **M
 | [FEAT-1](#feat-1) | Dev server (`run`) | medium | L | `/spec-feature` | ARCH-1, a dependency approval | open |
 | [FEAT-2](#feat-2) | `publish`: dropped, never implemented | — | — | — | — | dropped |
 | [FEAT-3](#feat-3) | Agent skill for using mango as a tool | medium | M | `/spec-feature` | — | open |
+| [FEAT-4](#feat-4) | Plain `key: value` frontmatter instead of JSON | medium | M | `/spec-feature` | — | open |
 | [ARCH-1](#arch-1) | Split the build into plan and commit; add `lib.rs` | high | L | `/spec-feature` | — | done |
 | [ARCH-2](#arch-2) | One output model instead of three | high | L | `/spec-feature` | ARCH-1, ARCH-3 | done |
 | [ARCH-3](#arch-3) | `Slug` and `Tag` newtypes | high | M | `/spec-feature` | — | done |
@@ -20,6 +21,7 @@ Statuses: `open`, `done`, `dropped`. Sizes: **S** (one module, under a day), **M
 | [ARCH-7](#arch-7) | Smaller cleanups: frontmatter return type, CLI path types | low | S | `/ship-feature` | — | open |
 | [OPS-1](#ops-1) | Continuous integration | medium | S | `/ship-feature` | a git remote | done |
 | [OPS-2](#ops-2) | Release process, changelog and binaries | medium | S | manual | OPS-1 | done |
+| [OPS-3](#ops-3) | Pipeline: evidence for design claims, and a route for design fixes | medium | S | manual | — | open |
 | [SPEC-1](#spec-1) | Confirm the constitution's open proposals | medium | S | manual | — | done |
 | [SPEC-2](#spec-2) | Publish the legacy acceptance criteria into tracked specs | medium | M | `/ship-feature` | — | done |
 | [SPEC-3](#spec-3) | Rewrite the legacy AC tags into spec-scoped form | low | M | `/ship-feature` | ARCH-1 | open |
@@ -31,10 +33,11 @@ Statuses: `open`, `done`, `dropped`. Sizes: **S** (one module, under a day), **M
 | [RISK-6](#risk-6) | Backslashes in file names become folder separators | low | S | `/spec-feature` | — | open |
 | [RISK-7](#risk-7) | Asset-copy errors name the source, not the destination | low | S | `/ship-feature` | — | open |
 | [RISK-8](#risk-8) | Content page order depends on the filesystem | low | S | `/spec-feature` | — | open |
+| [RISK-9](#risk-9) | A JSON array is accepted as frontmatter | low | S | `/spec-feature` | — | open |
 | [TEST-1](#test-1) | No test for CRLF line endings | low | S | `/ship-feature` | — | done |
 | [DOC-1](#doc-1) | Stale line references in the system overview | low | S | `/ship-feature` | — | open |
 
-Recommended order: ARCH-1 → ARCH-3 → ARCH-2, then ARCH-4 to ARCH-7 in any order. FEAT-1 comes after ARCH-1, which gives it the seam it needs; FEAT-2 is closed as dropped. FEAT-3 is independent and can be done at any time; if it lands before FEAT-1, FEAT-1 updates it. The RISK and TEST items are independent and can be done at any time.
+Recommended order: ARCH-1 → ARCH-3 → ARCH-2, then ARCH-4 to ARCH-7 in any order. FEAT-1 comes after ARCH-1, which gives it the seam it needs; FEAT-2 is closed as dropped. FEAT-3 is independent and can be done at any time; if it lands before FEAT-1, FEAT-1 updates it. The RISK and TEST items are independent and can be done at any time. FEAT-4 would replace JSON frontmatter altogether, so decide on it before RISK-9, which it would make moot. OPS-3 changes only the dev pipeline and can be done at any time.
 
 ---
 
@@ -188,6 +191,35 @@ Product-level work, as opposed to the refactoring that makes up the rest of this
 
 **Done when.** The skill is in the repo at the path the spec picks, with the frontmatter the format requires and a `description` that names when to use it. It covers everything listed above. A test fails if a CLI flag, config field or required template is missing from it, or if its example site no longer builds. `README.md` tells site authors it exists and how to install it.
 
+### FEAT-4
+**Plain `key: value` frontmatter instead of JSON** · medium · M · `/spec-feature` · open
+
+**Problem.** Frontmatter is a JSON object, which is awkward to write by hand: every string needs quotes, braces and commas must balance, and a trailing comma fails the build. The data is small and flat (six keys: four strings, one date, one boolean and a list of tags), so a full data language buys nothing. Raised by the maintainer on 2026-09-25 while specifying RISK-4. **Undecided:** the maintainer will decide later whether mango should make this change at all.
+
+**Proposal.** One `key: value` pair per line between the existing `---` delimiters, split on the first colon, so a title may contain colons:
+```
+---
+title: Rust and WASM: drawing on a canvas
+author: Wren Calloway
+description: Notes from a weekend experiment
+date: 2026-01-24
+tags: rust, wasm, canvas
+draft: false
+---
+```
+`tags` is comma-separated. That is unambiguous because a tag cannot contain a comma or a space, and a missing comma still fails loudly: `tags: rust wasm` becomes the single tag `rust wasm`, which the tag rules reject. Templates keep receiving `page.tags` as a list, so no theme changes. The parser is mango's own, with no new dependency, so errors can name the line, and RISK-4's "one error listing every key problem" rule falls out naturally.
+
+**Settle these in the spec, before any code.**
+- **Quotes.** Is `title: "Hello"` the text `Hello`, or the text with its quote marks? Whatever is chosen, it must be one rule with no exceptions.
+- **YAML lookalikes.** The format looks like YAML, so authors will try YAML syntax: `- item` lists, `|` and `>` blocks, `#` comments, `[a, b]` lists, nested keys. Each one needs a defined outcome, and silently meaning something else is not acceptable.
+- **Values.** Leading and trailing whitespace, empty values (`tags:` with nothing after it means no tags?), multi-line values (probably none), and how `draft` is spelled (`true`/`false` only?).
+- **Required keys.** Whether `draft` (and perhaps `author` or `description`) should become optional with a default, as `draft` is in most generators.
+- **Keys.** RISK-4's rules carry over: six accepted keys, compared exactly, unknown and missing keys reported together. Duplicate keys need a rule.
+- **Migration.** This breaks every existing content file, including `example/site`. It needs a `CHANGELOG.md` entry with before-and-after examples, and a decision on whether mango offers any conversion help.
+- **Identity.** `mango.json` stays JSON. The spec should say why having two formats is acceptable: config and content are different things.
+
+**Done when.** Content files use the new format and JSON frontmatter is rejected with an error that points to the new format. The example site, `README.md`, `CLAUDE.md` and FEAT-3's skill (if it has landed) are updated. The RISK-4 behavior is preserved in the new parser, and RISK-9 is closed as moot.
+
 ---
 
 ## Operations and specs
@@ -205,6 +237,19 @@ No CI exists because the repository has no remote. Once one is added, run the de
 mango had a version (`0.1.0` in `Cargo.toml`) but no tag, no release and no changelog, so there was nothing to download and no record of what changed.
 
 **Landed.** Decided with the maintainer on 2026-09-25 and written down as **Releasing** in `specs/constitution.md`, next to **Landing**. Releases are GitHub Releases tagged `vX.Y.Z`, with binaries for `x86_64-unknown-linux-musl` and `x86_64-pc-windows-msvc` (the platforms CI tests; macOS left out for now) and a `SHA256SUMS` file; nothing goes to crates.io. Semantic Versioning applies to the site-author surface, not the library. `CHANGELOG.md` follows Keep a Changelog, starts with an empty `[Unreleased]` section, and every pull request that changes what a site author sees adds an entry to it (definition of done, item 7). A `Release vX.Y.Z` pull request bumps the version and dates the section; once it merges, the maintainer runs `.github/workflows/release.yml` by hand from the Actions tab. That workflow is hand-written with only GitHub's own actions and `gh`, and adds no dependency. It refuses a branch other than the default, an existing tag or release, and a missing or empty changelog section. It reuses the CI gate (`ci.yml` gained `workflow_call`), builds with `--release --locked`, checks the binary's `--version`, and creates a **draft** Release; the tag exists only once the maintainer publishes it. Agents may prepare the release pull request but never run the workflow, tag or publish. Checked locally: the musl build links statically without `musl-tools`, the notes extraction picks the right section (first, middle or last) and rejects a missing one, and `actionlint` (with shellcheck) passes on both workflows. The workflow itself first runs for real with v0.1.0.
+
+### OPS-3
+**Pipeline: evidence for design claims, and a route for design fixes** · medium · S · manual · open
+
+**Problem.** Two weaknesses in the dev pipeline (`.claude/`) showed up in the RISK-4 run on 2026-09-25.
+1. **Unchecked claims in a design.** Design v1 stated two facts about serde and serde_json that were false: that `deny_unknown_fields` was unreachable at runtime, and that a `serde_json::Value` parse accepts the same input as the typed parse. Neither was checked against the library source, although it was on disk. The first was caught by a Developer test, the second by the Reviewer, and neither reached `master`. But they cost a review loop, a stop and two extra design passes.
+2. **No cheap path for "the code is right and the design is wrong".** The Developer may not edit specs, and review can only send work back to develop. A correct deviation from the design therefore forced a `scope_change` stop, a design re-approval and another full develop, test and review round, and the develop pass in between could do nothing about the finding.
+
+**Proposal.**
+- **Evidence for claims.** The architect persona must back every claim about third-party library behavior with evidence (a source line in the locked crate version, or an existing test), or list it as an assumption that a safety-net task proves first. Design v3 of RISK-4 is the model.
+- **A route for design fixes.** Let review route design-only findings to the design stage rather than to develop. For example, give review's findings a target, or add an `on_design_changes` handler to the workflow. The re-run design still stops for the maintainer's approval.
+
+**Done when.** The architect persona's instructions include the evidence rule. The `spec-feature` workflow and `run-workflow.md` have a route for design-only findings that needs no `scope_change` stop and still requires the maintainer's approval of the amended design. The constitution records both changes.
 
 ### SPEC-1
 **Confirm the constitution's open proposals** · medium · S · manual · done
@@ -285,6 +330,11 @@ When copying an asset fails during `commit`, `output::write` reports `IoPath` wi
 
 `loader::load` returns pages in `read_dir` order, which is not sorted and differs between filesystems. Content pages come first in the plan, so the order of `BuildPlan::outputs()`, the order files are written in, and which page's render error is reported when several pages fail all vary by filesystem. The output bytes do not: every listing is sorted, and a page-vs-page collision prints the same labels either way. Recorded as baseline AC-2.4 in `specs/arch-2/requirements.md`. Proposal: sort pages by slug in the loader, so enumeration and error precedence are deterministic too. Because this changes which error a user sees first, it is a `/spec-feature` change.
 
+### RISK-9
+**A JSON array is accepted as frontmatter** · low · S · `/spec-feature` · open
+
+serde's derived deserializer for `MangoFrontmatter` also accepts a JSON array whose values are in field order, so a page whose frontmatter is `["t", "a", "d", null, null, false]` builds today, with no keys at all. RISK-4 left this alone on purpose: an array has no keys, so its key check doesn't apply, and the spec keeps non-object errors as they were (AC-5.1 in `specs/risk-4/requirements.md`; Risks in `specs/risk-4/design.md`). Nobody writes frontmatter this way on purpose, but it is a second, undocumented format. Proposal: reject any frontmatter that is not a JSON object, with an error naming the file. Because it rejects input that builds today, it is a `/spec-feature` change. [FEAT-4](#feat-4) would make this item moot.
+
 ### TEST-1
 **No test for CRLF line endings** · low · S · `/ship-feature` · done
 
@@ -295,4 +345,4 @@ End to end, `tests/build.rs::build_accepts_crlf_line_endings` builds a CRLF temp
 ### DOC-1
 **Stale line references in the system overview** · low · S · `/ship-feature` · open
 
-`specs/_system/overview.md` cites line numbers (e.g. in `src/cli.rs` and `example/meta/templates/page.html`) that moved in later commits. Refresh them, or cite functions instead of lines so they stay valid; ARCH-1 to ARCH-5 will move most of them again, so this is best done after those land. The "Risky areas" rows for `loader::traverse` and `assets::collect` are also stale now that RISK-1 and RISK-2 are done; refresh them in the same pass.
+`specs/_system/overview.md` cites line numbers (e.g. in `src/cli.rs` and `example/meta/templates/page.html`) that moved in later commits. Refresh them, or cite functions instead of lines so they stay valid; ARCH-1 to ARCH-5 will move most of them again, so this is best done after those land. The "Risky areas" rows for `loader::traverse` and `assets::collect` are also stale now that RISK-1 and RISK-2 are done; refresh them in the same pass. So is the `frontmatter.rs` risk row: it cites `MangoFrontmatter` at `:8-16` and the CRLF handling at `:25` and `:35-36` (now `:23-31`, `:40` and `:50-51`), and still says "CRLF untested", although TEST-1 added those tests (flagged by the RISK-4 review). The repository is now public, so stale references are visible to every reader.
