@@ -4,7 +4,9 @@ A small static site generator written in Rust. It loads markdown files with JSON
 
 ## Quick start
 
-mango builds with the Rust toolchain pinned in `rust-toolchain.toml` (1.92).
+Each [release](https://github.com/pblanc5/mango/releases) has prebuilt binaries for Linux (x86_64, statically linked, `.tar.gz`) and Windows (x86_64, `.zip`), with a `SHA256SUMS` file to check them against. Unpack the archive and put `mango` (or `mango.exe`) on your `PATH`. What changed in each version is in [`CHANGELOG.md`](CHANGELOG.md).
+
+To build from source instead, you need the Rust toolchain pinned in `rust-toolchain.toml` (1.92):
 
 ```sh
 cargo install --path .

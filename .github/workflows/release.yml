@@ -1,0 +1,175 @@
+# Drafts a GitHub Release with Linux and Windows binaries (OPS-2).
+# Run by hand by the maintainer from the Actions tab, on the integration branch, after the
+# release pull request has merged; the process is "Releasing" in specs/constitution.md.
+# The version comes from Cargo.toml and the notes from its CHANGELOG.md section. The release
+# is a draft: the vX.Y.Z tag is created on GitHub only when the maintainer publishes it.
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Require the default branch
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [ "$REF_NAME" != "$DEFAULT_BRANCH" ]; then
+            echo "::error::Run the release from '$DEFAULT_BRANCH', not '$REF_NAME'."
+            exit 1
+          fi
+      - name: Check out
+        uses: actions/checkout@v5
+      - name: Install pinned toolchain
+        run: rustup toolchain install
+      - name: Read the version from Cargo.toml
+        id: version
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "mango") | .version')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing v$version"
+      - name: Check the tag is new
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" > /dev/null; then
+            echo "::error::Tag v$VERSION already exists: bump the version in a release pull request first."
+            exit 1
+          fi
+      - name: Extract the release notes from CHANGELOG.md
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          awk -v heading="## [$VERSION] - " '
+            index($0, heading) == 1 { found = 1; next }
+            found && (/^## \[/ || /^\[[^]]*\]: /) { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error::CHANGELOG.md has no non-empty '## [$VERSION] - YYYY-MM-DD' section."
+            exit 1
+          fi
+          cat notes.md
+      - name: Upload the release notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: notes
+          path: notes.md
+          if-no-files-found: error
+
+  gate:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: [prepare, gate]
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TARGET: ${{ matrix.target }}
+      ARCHIVE: ${{ matrix.archive }}
+    steps:
+      # Ship README.md, LICENSE and CHANGELOG.md with the LF endings they are committed with.
+      - name: Disable line-ending conversion
+        run: git config --global core.autocrlf false
+      - name: Check out
+        uses: actions/checkout@v5
+      - name: Install pinned toolchain and target
+        run: |
+          rustup toolchain install
+          rustup target add "$TARGET"
+      - name: Build
+        run: cargo build --release --locked --target "$TARGET"
+      - name: Check the binary reports the version
+        run: |
+          actual=$("target/$TARGET/release/mango" --version)
+          if [ "$actual" != "mango $VERSION" ]; then
+            echo "::error::Expected 'mango $VERSION', got '$actual'."
+            exit 1
+          fi
+      - name: Package
+        run: |
+          name="mango-v$VERSION-$TARGET"
+          mkdir "$name"
+          cp README.md LICENSE CHANGELOG.md "$name/"
+          if [ "$ARCHIVE" = zip ]; then
+            cp "target/$TARGET/release/mango.exe" "$name/"
+            7z a -tzip "$name.zip" "$name" > /dev/null
+          else
+            cp "target/$TARGET/release/mango" "$name/"
+            tar -czf "$name.tar.gz" "$name"
+          fi
+      - name: Upload the archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: mango-${{ matrix.target }}
+          path: mango-v*.${{ matrix.archive }}
+          if-no-files-found: error
+
+  release:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Download the release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: notes
+      - name: Download the archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: mango-*
+          path: dist
+          merge-multiple: true
+      - name: Write checksums
+        working-directory: dist
+        run: |
+          sha256sum mango-v* > SHA256SUMS
+          cat SHA256SUMS
+      - name: Refuse an existing release
+        run: |
+          if gh release view "v$VERSION" > /dev/null 2>&1; then
+            echo "::error::A release v$VERSION already exists (it may be a draft): delete it, then run this again."
+            exit 1
+          fi
+      - name: Create the draft release
+        run: |
+          gh release create "v$VERSION" dist/* \
+            --draft \
+            --target "$GITHUB_SHA" \
+            --title "v$VERSION" \
+            --notes-file notes.md

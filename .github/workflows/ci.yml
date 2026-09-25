@@ -1,10 +1,12 @@
 # Runs the definition-of-done gate (CLAUDE.md) on Linux and Windows (OPS-1).
 # The toolchain comes only from rust-toolchain.toml; no version is named here.
+# release.yml calls it too, so a release is built only from a tree that passes the gate (OPS-2).
 name: CI
 
 on:
   push:
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
