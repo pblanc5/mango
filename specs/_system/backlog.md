@@ -21,7 +21,7 @@ Statuses: `open`, `done`, `dropped`. Sizes: **S** (one module, under a day), **M
 | [ARCH-7](#arch-7) | Smaller cleanups: frontmatter return type, CLI path types | low | S | `/ship-feature` | — | open |
 | [OPS-1](#ops-1) | Continuous integration | medium | S | `/ship-feature` | a git remote | done |
 | [OPS-2](#ops-2) | Release process, changelog and binaries | medium | S | manual | OPS-1 | done |
-| [OPS-3](#ops-3) | Pipeline: evidence for design claims, and a route for design fixes | medium | S | manual | — | open |
+| [OPS-3](#ops-3) | Pipeline: evidence for design claims, and a route for design fixes | medium | S | manual | — | done |
 | [SPEC-1](#spec-1) | Confirm the constitution's open proposals | medium | S | manual | — | done |
 | [SPEC-2](#spec-2) | Publish the legacy acceptance criteria into tracked specs | medium | M | `/ship-feature` | — | done |
 | [SPEC-3](#spec-3) | Rewrite the legacy AC tags into spec-scoped form | low | M | `/ship-feature` | ARCH-1 | open |
@@ -239,7 +239,7 @@ mango had a version (`0.1.0` in `Cargo.toml`) but no tag, no release and no chan
 **Landed.** Decided with the maintainer on 2026-09-25 and written down as **Releasing** in `specs/constitution.md`, next to **Landing**. Releases are GitHub Releases tagged `vX.Y.Z`, with binaries for `x86_64-unknown-linux-musl` and `x86_64-pc-windows-msvc` (the platforms CI tests; macOS left out for now) and a `SHA256SUMS` file; nothing goes to crates.io. Semantic Versioning applies to the site-author surface, not the library. `CHANGELOG.md` follows Keep a Changelog, starts with an empty `[Unreleased]` section, and every pull request that changes what a site author sees adds an entry to it (definition of done, item 7). A `Release vX.Y.Z` pull request bumps the version and dates the section; once it merges, the maintainer runs `.github/workflows/release.yml` by hand from the Actions tab. That workflow is hand-written with only GitHub's own actions and `gh`, and adds no dependency. It refuses a branch other than the default, an existing tag or release, and a missing or empty changelog section. It reuses the CI gate (`ci.yml` gained `workflow_call`), builds with `--release --locked`, checks the binary's `--version`, and creates a **draft** Release; the tag exists only once the maintainer publishes it. Agents may prepare the release pull request but never run the workflow, tag or publish. Checked locally: the musl build links statically without `musl-tools`, the notes extraction picks the right section (first, middle or last) and rejects a missing one, and `actionlint` (with shellcheck) passes on both workflows. The workflow itself first runs for real with v0.1.0.
 
 ### OPS-3
-**Pipeline: evidence for design claims, and a route for design fixes** · medium · S · manual · open
+**Pipeline: evidence for design claims, and a route for design fixes** · medium · S · manual · done
 
 **Problem.** Two weaknesses in the dev pipeline (`.claude/`) showed up in the RISK-4 run on 2026-09-25.
 1. **Unchecked claims in a design.** Design v1 stated two facts about serde and serde_json that were false: that `deny_unknown_fields` was unreachable at runtime, and that a `serde_json::Value` parse accepts the same input as the typed parse. Neither was checked against the library source, although it was on disk. The first was caught by a Developer test, the second by the Reviewer, and neither reached `master`. But they cost a review loop, a stop and two extra design passes.
@@ -250,6 +250,10 @@ mango had a version (`0.1.0` in `Cargo.toml`) but no tag, no release and no chan
 - **A route for design fixes.** Let review route design-only findings to the design stage rather than to develop. For example, give review's findings a target, or add an `on_design_changes` handler to the workflow. The re-run design still stops for the maintainer's approval.
 
 **Done when.** The architect persona's instructions include the evidence rule. The `spec-feature` workflow and `run-workflow.md` have a route for design-only findings that needs no `scope_change` stop and still requires the maintainer's approval of the amended design. The constitution records both changes.
+
+**Landed.** Done by hand rather than through the pipeline, since it changes the pipeline itself; the maintainer approved the plan first. Recorded in the constitution as **Designs and design amendments**.
+- **Evidence:** `pipeline-architect.md` requires a source line in the locked version, fetched documentation or an existing test for every claim about external behavior. Its output template gains **Unverified assumptions** under Risks, and each unverified claim becomes the first safety-net task. On a re-run fed by a routed review, the Architect brings the design in line with the approved code and changes no requirement.
+- **Route:** the Reviewer adds `route: design` to a `changes-requested` artifact only when every blocking and should-fix finding is in the design and the code is correct; with code findings left, the code goes first. `scope_change` is reserved for wrong requirements. The Developer may depart from a wrong design inside the listed Files, marking it **design amendment needed** with evidence, and still never edits the design. `run-workflow.md` accepts the new stage key `on_design_changes` (its `goto` must be an earlier or the same stage with `gate: human`), validates `route`, and sends a routed review to that handler, whose design then stops for approval before develop, test and review run again. `spec-feature.yaml` routes review to `design` at most twice; `feature.yaml` has no design stage and is unchanged. The workflow template documents the key.
 
 ### SPEC-1
 **Confirm the constitution's open proposals** · medium · S · manual · done

@@ -37,6 +37,8 @@ The orchestrator (`/run-workflow`) sends you:
    - a feedback item that contradicts the spec
 
    If you find one, make **no edits**. Return `scope_change: true` and explain what's missing and what you propose. Small deviations that are clearly necessary are fine, such as a private helper in a listed file, but record them under Deviations.
+
+   **When the design itself is wrong** (following it would break an acceptance criterion, or it states something false about a library), you may depart from it inside the listed Files, as long as every acceptance criterion still holds. Record it under Deviations, marked **design amendment needed**, with the evidence: the failing test, or the source line that contradicts the design. You still never edit the design document; the Reviewer routes the amendment to the design stage.
 4. **If you can't proceed** (the spec is contradictory, or the environment is broken), return `verdict: blocked` without partial edits, or list exactly what you left half-done.
 
 ## Your job
@@ -98,7 +100,7 @@ summary: <one line: what was implemented or fixed>
 | ... | ... | ... |
 
 ### Deviations
-<Anything not literally in the approved documents, and why. Otherwise "None".>
+<Anything not literally in the approved documents, and why. Mark each departure from a wrong design "design amendment needed", with its evidence. Otherwise "None".>
 
 ## Feedback for next stage
 <Notes for the Tester: what to focus on, how to exercise the change.>

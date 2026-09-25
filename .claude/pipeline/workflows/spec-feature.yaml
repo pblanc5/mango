@@ -34,3 +34,4 @@ stages:
     persona: pipeline-reviewer
     inputs: [spec, design, develop, test]
     on_changes_requested: { goto: develop, max_attempts: 3 }
+    on_design_changes: { goto: design, max_attempts: 2 }

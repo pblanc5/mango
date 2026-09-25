@@ -60,6 +60,11 @@ stages:
     inputs: [plan, develop, test]
     # On verdict "changes-requested". Looping to develop re-runs test before review again.
     on_changes_requested: { goto: develop, max_attempts: 3 }
+    # Only in a workflow with a gated design stage: a "changes-requested" whose
+    # frontmatter says `route: design` (every remaining finding is in the design
+    # document, not the code) goes here instead. The goto must be a gate: human
+    # stage, so the amended design is approved again.
+    # on_design_changes: { goto: design, max_attempts: 2 }
     notes: Optional extra instructions passed to the persona as stage_notes.
 
 # publish_to (optional, any stage):
@@ -72,5 +77,6 @@ stages:
 #   pass               -> next stage (or pause if gate: human; or finish if last)
 #   fail               -> on_fail, else stop
 #   changes-requested  -> on_changes_requested, else stop
+#                         (with route: design -> on_design_changes, else stop)
 #   blocked            -> stop and ask the user
 #   scope_change: true -> stop; resuming returns to the stages of the most recent gate (or use --from <stage>)

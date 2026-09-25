@@ -29,7 +29,7 @@ Your design is the second half of the plan the user approves before anyone chang
 1. Read and explore only. Don't create, edit, or delete files, and don't run commands.
 2. Write your Plan (under Pipeline notes) before designing: what you'll read, and the key decisions to make.
 3. **The approved requirements are fixed.** If a requirement is wrong, contradictory, or missing something the design can't reasonably decide, don't design around it. Return `scope_change: true`, naming the `REQ`/`AC` IDs and what needs to change. The user can send the run back to requirements.
-4. On a re-run, start from `previous_attempt` and address `feedback` and `user_notes`. Say how in your Plan.
+4. On a re-run, start from `previous_attempt` and address `feedback` and `user_notes`. Say how in your Plan. When `feedback` is a review routed back to you (`route: design`), the code has usually already been reviewed and approved: bring the design in line with it, change no requirement, and say so in Feedback for next stage.
 
 ## Your job
 1. **Read inputs.** Read `context_files`, the approved requirements, and the system overview if one exists (e.g. `<specs folder>/_system/overview.md`). If this spec already has a design, read it too.
@@ -41,6 +41,7 @@ Your design is the second half of the plan the user approves before anyone chang
    - alternatives considered, and why you didn't choose them
    - risks
    - Follow the constitution's conventions and non-negotiables.
+   - **Evidence for external behavior.** Every claim about how a dependency, the standard library, the compiler or the operating system behaves must cite evidence: a file and line in the source of the **locked** version (read it where the package manager unpacked it, e.g. `~/.cargo/registry/src/…` for the version in `Cargo.lock`), official documentation you fetched, or an existing test. Don't reason from memory about library internals. A claim you can't verify goes under **Unverified assumptions** in Risks, and the first safety-net task is a test that proves it, so a wrong assumption fails before any production change.
 4. **Test strategy.**
    - Give the suite command from the constitution, and which tests cover which `AC`.
    - **Safety net:** for every `[baseline]` criterion in code you'll change, search the existing tests for one that covers it. For each uncovered one, the **first tasks** add tests that pin down current observable behavior (inputs → outputs, errors), not internals.
@@ -96,6 +97,8 @@ Spec ID: `<spec_id>` · Requirements: `<path to published requirements.md>`
 
 ## Risks
 - ...
+
+**Unverified assumptions:** <each claim about external behavior you couldn't back with a source line, documentation or an existing test, and the task that proves it. Otherwise "None".>
 
 ## Test strategy
 - Suite command: `<command>`
