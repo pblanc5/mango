@@ -4,6 +4,10 @@ All notable changes to mango are recorded here, for the people who use it to bui
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** unknown frontmatter keys now fail the build, drafts included, so a typo such as `"tag"` for `"tags"` or `"dates"` for `"date"` no longer silently drops the page's tags or date. Only `title`, `author`, `description`, `date`, `tags` and `draft` are accepted, and keys are compared exactly. Each failing page gets one error that lists every unknown and every missing key, and the accepted keys. A site that used extra frontmatter keys must remove them before it builds again.
+
 ## [0.1.0] - 2026-09-25
 
 The first release. Prebuilt binaries are available for Linux (x86_64, statically linked) and Windows (x86_64).

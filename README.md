@@ -65,6 +65,12 @@ Markdown body.
 | `date` | no | strict `YYYY-MM-DD`; an invalid or impossible date fails the build |
 | `tags` | no | each tag is lowercase ASCII letters and digits separated by single hyphens (`static-site`); duplicates are dropped |
 
+Any other key is an error, drafts included, which catches typos such as `tag` for `tags` or `dates` for `date`. Keys are compared exactly, so `Title` is not `title`. A page with bad keys gets one error that lists every unknown and every missing key, followed by the accepted keys, so you can fix them all at once:
+
+```text
+Mango Frontmatter Error: site/posts/one.md: invalid frontmatter keys: unknown 'tag', unknown 'titel', missing 'title'; accepted keys are 'title', 'author', 'description', 'date', 'tags', 'draft'
+```
+
 Content files may use LF or CRLF line endings, or a mix of the two: a page written on Windows and its Unix twin build to byte-identical output. Templates and assets are not normalized — whatever line endings they have is what lands in `dist/`.
 
 File and folder names may only use ASCII letters, digits, `-`, `_` and `.`, so every URL is valid without encoding. `site/posts/post_one.md` becomes `/posts/post_one/`. A folder name or file name (without its extension) made only of dots, such as `...md`, is rejected, since it would publish the page outside its folder.

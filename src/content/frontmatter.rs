@@ -1,10 +1,25 @@
+use std::collections::BTreeMap;
+
 use serde::Deserialize;
+use serde::de::IgnoredAny;
 
 use crate::error::MangoError;
 
 const FRONTMATTER_DELIMITER: &str = "---";
 const BYTE_ORDER_MARK: char = '\u{feff}';
 
+/// Every key a page's frontmatter may contain, in the README field table's
+/// order. Must match the fields of `MangoFrontmatter`; a unit test keeps the
+/// two in step.
+const ACCEPTED_KEYS: [&str; 6] = ["title", "author", "description", "date", "tags", "draft"];
+
+/// The keys a page's frontmatter must contain, in the order they are reported.
+const REQUIRED_KEYS: [&str; 4] = ["title", "author", "description", "draft"];
+
+// No `deny_unknown_fields`: on invalid JSON the typed parse would then report
+// an unknown key met before the syntax error instead of today's error.
+// `check_keys` rejects unknown keys; `accepted_keys_match_the_struct_fields`
+// keeps `ACCEPTED_KEYS` and these fields in step.
 #[derive(Deserialize, Debug)]
 pub struct MangoFrontmatter {
     pub title: String,
@@ -34,8 +49,7 @@ pub fn parse(content: String) -> Result<(Option<MangoFrontmatter>, String), Mang
         if line.trim() == FRONTMATTER_DELIMITER {
             let json = json_lines.join("\n");
             let body = lines.collect::<Vec<_>>().join("\n");
-            let fm = serde_json::from_str::<MangoFrontmatter>(&json)
-                .map_err(|e| MangoError::Frontmatter(e.to_string()))?;
+            let fm = parse_json(&json)?;
 
             return Ok((Some(fm), body));
         }
@@ -46,6 +60,53 @@ pub fn parse(content: String) -> Result<(Option<MangoFrontmatter>, String), Mang
     Err(MangoError::Frontmatter(
         "unterminated frontmatter block".into(),
     ))
+}
+
+/// Checks the keys of a JSON object first, so every unknown and missing key
+/// is reported together and ahead of any other problem, whatever order the
+/// keys appear in. Anything else (invalid JSON, a non-object, or an object
+/// whose keys are fine) goes to the typed parse and keeps its exact error.
+///
+/// The key check reads the object as keys with `IgnoredAny` values: those
+/// are skipped exactly as the typed parse skips an unknown field's value, so
+/// every object the typed parse accepts gets its keys checked (a
+/// `serde_json::Value` parse would reject `1e400`, a lone surrogate or deep
+/// nesting and let such a key through).
+fn parse_json(json: &str) -> Result<MangoFrontmatter, MangoError> {
+    if let Ok(map) = serde_json::from_str::<BTreeMap<String, IgnoredAny>>(json) {
+        check_keys(&map)?;
+    }
+    serde_json::from_str::<MangoFrontmatter>(json)
+        .map_err(|e| MangoError::Frontmatter(e.to_string()))
+}
+
+/// One error listing every unknown key (sorted byte-wise) and then every
+/// missing required key (in `REQUIRED_KEYS` order), plus the accepted keys
+/// when any key is unknown. A present key counts whatever its value.
+fn check_keys(map: &BTreeMap<String, IgnoredAny>) -> Result<(), MangoError> {
+    let mut unknown: Vec<&str> = map
+        .keys()
+        .map(String::as_str)
+        .filter(|key| !ACCEPTED_KEYS.contains(key))
+        .collect();
+    unknown.sort_unstable();
+    let missing = REQUIRED_KEYS.iter().filter(|key| !map.contains_key(**key));
+
+    let problems: Vec<String> = unknown
+        .iter()
+        .map(|key| format!("unknown '{key}'"))
+        .chain(missing.map(|key| format!("missing '{key}'")))
+        .collect();
+    if problems.is_empty() {
+        return Ok(());
+    }
+
+    let mut msg = format!("invalid frontmatter keys: {}", problems.join(", "));
+    if !unknown.is_empty() {
+        let accepted: Vec<String> = ACCEPTED_KEYS.iter().map(|key| format!("'{key}'")).collect();
+        msg.push_str(&format!("; accepted keys are {}", accepted.join(", ")));
+    }
+    Err(MangoError::Frontmatter(msg))
 }
 
 #[cfg(test)]
@@ -108,6 +169,254 @@ mod tests {
     fn malformed_json_is_an_error() {
         let content = "---\n{not valid json\n---\nbody".to_string();
         assert!(matches!(parse(content), Err(MangoError::Frontmatter(_))));
+    }
+
+    /// Today's typed-parse error text for `json`, so the pins below compare
+    /// against serde's own wording instead of hard-coding it.
+    fn typed_parse_error(json: &str) -> String {
+        serde_json::from_str::<MangoFrontmatter>(json)
+            .unwrap_err()
+            .to_string()
+    }
+
+    fn frontmatter_error(json: &str) -> String {
+        match parse(format!("---\n{json}\n---\nbody")) {
+            Err(MangoError::Frontmatter(msg)) => msg,
+            other => panic!("expected a Frontmatter error for {json}, got {other:?}"),
+        }
+    }
+
+    // AC-risk-4.1.2, AC-risk-4.5.4 [baseline] A wrong-typed value is serde's
+    // `invalid type` error, unchanged.
+    #[test]
+    fn wrong_typed_value_is_the_typed_parse_error() {
+        let json = r#"{"title": 5, "author": "a", "description": "d", "draft": false}"#;
+        let msg = frontmatter_error(json);
+        assert_eq!(msg, typed_parse_error(json));
+        assert!(msg.contains("invalid type"), "{msg}");
+    }
+
+    // AC-risk-4.1.2, AC-risk-4.5.4 [baseline] A duplicate known key is serde's
+    // `duplicate field` error, unchanged.
+    #[test]
+    fn duplicate_known_key_is_the_typed_parse_error() {
+        let json =
+            r#"{"title": "t", "title": "u", "author": "a", "description": "d", "draft": false}"#;
+        let msg = frontmatter_error(json);
+        assert_eq!(msg, typed_parse_error(json));
+        assert!(msg.contains("duplicate field"), "{msg}");
+    }
+
+    // AC-risk-4.1.2, AC-risk-4.5.1 [baseline] Valid JSON that is not an object
+    // keeps the typed parser's error.
+    #[test]
+    fn non_object_json_is_the_typed_parse_error() {
+        for json in ["42", r#""text""#] {
+            assert_eq!(frontmatter_error(json), typed_parse_error(json), "{json}");
+        }
+    }
+
+    // AC-risk-4.5.1 Invalid JSON keeps the typed parser's error, with no key
+    // errors, even when an unknown key comes before the syntax error (which
+    // is why `MangoFrontmatter` has no `deny_unknown_fields`).
+    #[test]
+    fn invalid_json_is_the_typed_parse_error() {
+        let json = r#"{"titel": "t", "tag": []"#;
+        let msg = frontmatter_error(json);
+        assert_eq!(msg, typed_parse_error(json));
+        assert!(!msg.contains("unknown"), "{msg}");
+    }
+
+    const ACCEPTED_SUFFIX: &str =
+        "; accepted keys are 'title', 'author', 'description', 'date', 'tags', 'draft'";
+
+    // AC-risk-4.3.1, AC-risk-4.4.2, AC-risk-4.4.3
+    #[test]
+    fn unknown_key_is_an_error_listing_the_accepted_keys() {
+        let json =
+            r#"{"title": "t", "author": "a", "description": "d", "draft": false, "tag": ["rust"]}"#;
+        assert_eq!(
+            frontmatter_error(json),
+            format!("invalid frontmatter keys: unknown 'tag'{ACCEPTED_SUFFIX}")
+        );
+    }
+
+    // AC-risk-4.3.2
+    #[test]
+    fn keys_are_compared_exactly() {
+        for key in ["Title", "TAGS", "title "] {
+            let json = format!(
+                r#"{{"title": "t", "author": "a", "description": "d", "draft": false, "{key}": 1}}"#
+            );
+            assert_eq!(
+                frontmatter_error(&json),
+                format!("invalid frontmatter keys: unknown '{key}'{ACCEPTED_SUFFIX}"),
+                "{key:?}"
+            );
+        }
+    }
+
+    // AC-risk-4.3.4
+    #[test]
+    fn only_accepted_keys_parse_as_before() {
+        let (fm, _) = parse(format!("---\n{VALID_JSON}\n---\nbody")).unwrap();
+        assert_eq!(fm.expect("frontmatter").title, "Post One");
+        for json in [
+            r#"{"title": "t", "author": "a", "description": "d", "draft": false}"#,
+            r#"{"title": "t", "author": "a", "description": "d", "date": "2026-01-24", "draft": false}"#,
+            r#"{"title": "t", "author": "a", "description": "d", "tags": [], "draft": false}"#,
+        ] {
+            let (fm, _) = parse(format!("---\n{json}\n---\nbody")).unwrap();
+            assert_eq!(fm.expect("frontmatter").title, "t", "{json}");
+        }
+    }
+
+    // AC-risk-4.4.2, AC-risk-4.4.4
+    #[test]
+    fn every_unknown_and_missing_key_is_listed_in_a_fixed_order() {
+        let expected = format!(
+            "invalid frontmatter keys: unknown 'tag', unknown 'titel', missing 'title'{ACCEPTED_SUFFIX}"
+        );
+        for json in [
+            r#"{"titel": "t", "tag": [], "author": "a", "description": "d", "draft": false}"#,
+            r#"{"draft": false, "description": "d", "tag": [], "author": "a", "titel": "t"}"#,
+        ] {
+            assert_eq!(frontmatter_error(json), expected, "{json}");
+        }
+    }
+
+    // AC-risk-4.4.4
+    #[test]
+    fn unknown_keys_are_sorted_byte_wise_and_missing_keys_in_field_order() {
+        let json = r#"{"b": 1, "a": 1, "Z": 1}"#;
+        assert_eq!(
+            frontmatter_error(json),
+            format!(
+                "invalid frontmatter keys: unknown 'Z', unknown 'a', unknown 'b', missing 'title', missing 'author', missing 'description', missing 'draft'{ACCEPTED_SUFFIX}"
+            )
+        );
+    }
+
+    // AC-risk-4.4.5
+    #[test]
+    fn empty_object_reports_every_missing_key_without_the_accepted_list() {
+        assert_eq!(
+            frontmatter_error("{}"),
+            "invalid frontmatter keys: missing 'title', missing 'author', missing 'description', missing 'draft'"
+        );
+    }
+
+    // AC-risk-4.4.6
+    #[test]
+    fn a_repeated_key_is_named_once() {
+        for json in [
+            r#"{"title": "t", "author": "a", "description": "d", "draft": false, "tag": 1, "tag": 2}"#,
+            r#"{"title": "t", "title": "u", "author": "a", "description": "d", "draft": false, "tag": 1}"#,
+        ] {
+            let msg = frontmatter_error(json);
+            assert_eq!(
+                msg,
+                format!("invalid frontmatter keys: unknown 'tag'{ACCEPTED_SUFFIX}"),
+                "{json}"
+            );
+            assert!(!msg.contains("duplicate field"), "{msg}");
+        }
+    }
+
+    // AC-risk-4.4 (REQ intro): a present key counts whatever its value.
+    #[test]
+    fn null_valued_key_counts_as_present() {
+        let json =
+            r#"{"title": null, "author": "a", "description": "d", "draft": false, "tag": 1}"#;
+        let msg = frontmatter_error(json);
+        assert_eq!(
+            msg,
+            format!("invalid frontmatter keys: unknown 'tag'{ACCEPTED_SUFFIX}")
+        );
+        assert!(!msg.contains("missing"), "{msg}");
+    }
+
+    // AC-risk-4.3.1 The typed parse skips an unknown key's value without
+    // checking it, so the key check must accept the same values: a number out
+    // of `f64` range, a lone surrogate and nesting deeper than serde_json's
+    // recursion limit (128) still report the key instead of building silently.
+    #[test]
+    fn unknown_key_is_reported_whatever_its_value() {
+        let deep = format!("{}{}", "[".repeat(200), "]".repeat(200));
+        for value in ["1e400", r#""\udc00""#, deep.as_str()] {
+            let json = format!(
+                r#"{{"title": "t", "author": "a", "description": "d", "draft": false, "extra": {value}}}"#
+            );
+            assert_eq!(
+                frontmatter_error(&json),
+                format!("invalid frontmatter keys: unknown 'extra'{ACCEPTED_SUFFIX}"),
+                "{value}"
+            );
+        }
+    }
+
+    // AC-risk-4.5.2
+    #[test]
+    fn key_errors_win_over_wrong_typed_values_in_any_order() {
+        let expected = format!("invalid frontmatter keys: unknown 'tag'{ACCEPTED_SUFFIX}");
+        for json in [
+            r#"{"title": 5, "author": "a", "description": "d", "draft": false, "tag": 1}"#,
+            r#"{"tag": 1, "title": 5, "author": "a", "description": "d", "draft": false}"#,
+            r#"{"title": "t", "author": "a", "description": "d", "draft": "no", "tag": 1}"#,
+            r#"{"tag": 1, "title": "t", "author": "a", "description": "d", "draft": "no"}"#,
+        ] {
+            let msg = frontmatter_error(json);
+            assert_eq!(msg, expected, "{json}");
+            assert!(!msg.contains("invalid type"), "{msg}");
+        }
+    }
+
+    // AC-risk-4.1.1 The accepted keys and the struct's fields cannot drift
+    // apart: the typed parser alone accepts exactly `ACCEPTED_KEYS`.
+    #[test]
+    fn accepted_keys_match_the_struct_fields() {
+        use serde::de::{Error as _, Visitor, value::Error};
+
+        /// Answers `deserialize_struct` with the struct's field names, in
+        /// declaration order, as the error text.
+        struct FieldNames;
+        impl<'de> serde::Deserializer<'de> for FieldNames {
+            type Error = Error;
+            fn deserialize_any<V: Visitor<'de>>(self, _: V) -> Result<V::Value, Error> {
+                Err(Error::custom("not a struct"))
+            }
+            fn deserialize_struct<V: Visitor<'de>>(
+                self,
+                _: &'static str,
+                fields: &'static [&'static str],
+                _: V,
+            ) -> Result<V::Value, Error> {
+                Err(Error::custom(fields.join(",")))
+            }
+            serde::forward_to_deserialize_any! {
+                bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+                bytes byte_buf option unit unit_struct newtype_struct seq tuple
+                tuple_struct map enum identifier ignored_any
+            }
+        }
+
+        let fields = MangoFrontmatter::deserialize(FieldNames)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(fields, ACCEPTED_KEYS.join(","));
+
+        // Exactly `REQUIRED_KEYS` are required by the typed parser.
+        let all = serde_json::json!({
+            "title": "t", "author": "a", "description": "d",
+            "date": "2026-01-24", "tags": [], "draft": false
+        });
+        serde_json::from_value::<MangoFrontmatter>(all.clone()).expect("all keys");
+        for key in ACCEPTED_KEYS {
+            let mut without = all.clone();
+            without.as_object_mut().unwrap().remove(key);
+            let result = serde_json::from_value::<MangoFrontmatter>(without);
+            assert_eq!(result.is_err(), REQUIRED_KEYS.contains(&key), "'{key}'");
+        }
     }
 
     #[test]

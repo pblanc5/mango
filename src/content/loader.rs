@@ -370,6 +370,61 @@ mod tests {
         }
     }
 
+    // AC-risk-4.1.2 [baseline] A missing required key fails the load with a
+    // `Frontmatter` error that starts with the file path.
+    #[test]
+    fn missing_required_key_is_a_frontmatter_error_naming_the_file() {
+        let site = fixture_dir("missing_required_key");
+        let file = site.join("posts").join("no_title.md");
+        write_file(
+            &file,
+            "---\n{\"author\": \"a\", \"description\": \"d\", \"draft\": false}\n---\nbody\n",
+        );
+
+        let err = load(&site).expect_err("a missing required key must fail the load");
+        assert!(matches!(err, MangoError::Frontmatter(_)), "{err:?}");
+        let msg = err.to_string();
+        let prefix = format!("Mango Frontmatter Error: {}: ", file.display());
+        assert!(msg.starts_with(&prefix), "{msg}");
+    }
+
+    // AC-risk-4.5.3, AC-risk-4.4.2
+    #[test]
+    fn key_errors_win_over_date_tag_and_file_name_errors() {
+        let site = fixture_dir("key_errors_win_over_date_tag_and_file_name_errors");
+        let file = site.join("my posts").join("x.md");
+        write_file(
+            &file,
+            "---\n{\"title\": \"t\", \"author\": \"a\", \"description\": \"d\", \"draft\": false, \"date\": \"2026-02-30\", \"tags\": [\"Rust\"], \"tag\": []}\n---\nbody\n",
+        );
+
+        let err = load(&site).expect_err("key errors must fail the load");
+        assert!(matches!(err, MangoError::Frontmatter(_)), "{err:?}");
+        let msg = err.to_string();
+        assert!(msg.contains(&file.display().to_string()), "{msg}");
+        assert!(msg.contains("unknown 'tag'"), "{msg}");
+        assert!(!msg.contains("invalid date"), "{msg}");
+        assert!(!msg.contains("'Rust'"), "{msg}");
+        assert!(!msg.contains("invalid file name"), "{msg}");
+    }
+
+    // AC-risk-4.3.3
+    #[test]
+    fn unknown_key_in_draft_is_still_an_error() {
+        let site = fixture_dir("unknown_key_in_draft");
+        write_file(&site.join("posts/published.md"), &page("Published", false));
+        write_file(
+            &site.join("posts/draft.md"),
+            "---\n{\"title\": \"t\", \"author\": \"a\", \"description\": \"d\", \"draft\": true, \"dates\": \"2026-01-24\"}\n---\nbody\n",
+        );
+
+        let err = load(&site).expect_err("an unknown key in a draft must fail the load");
+        assert!(matches!(err, MangoError::Frontmatter(_)), "{err:?}");
+        let msg = err.to_string();
+        assert!(msg.contains("draft.md"), "{msg}");
+        assert!(msg.contains("unknown 'dates'"), "{msg}");
+    }
+
     // AC-arch-3.8.1
     #[test]
     fn dot_only_file_name_is_rejected_even_for_drafts() {

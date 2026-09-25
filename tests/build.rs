@@ -695,6 +695,58 @@ fn build_fails_on_invalid_tag_in_draft() {
     assert!(err.contains("'Rust'"), "{err}");
 }
 
+// AC-risk-4.3.1, AC-risk-4.4.1, AC-risk-4.4.2, AC-risk-4.4.3, AC-risk-4.6.1:
+// one error lists every key problem, and the previous output is kept.
+#[test]
+fn build_fails_on_unknown_frontmatter_keys_keeping_output() {
+    let dir = temp_dir("build_fails_on_unknown_frontmatter_keys_keeping_output");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    write_file(&site.join("posts/one.md"), &page("One", false));
+
+    assert_success(&build_temp_site(&site, &out));
+    write_file(&out.join("marker.txt"), "keep me");
+    let before = snapshot(&out);
+
+    write_file(
+        &site.join("posts/bad_keys.md"),
+        "---\n{\"titel\": \"Bad\", \"author\": \"tester\", \"description\": \"desc\", \"tag\": [\"blog\"], \"draft\": false}\n---\n# Bad\n",
+    );
+    let output = build_temp_site(&site, &out);
+
+    assert_failure(&output, "unknown frontmatter keys");
+    assert_eq!(output.status.code(), Some(1));
+    let err = stderr(&output);
+    assert!(err.contains("bad_keys.md"), "{err}");
+    assert!(
+        err.contains(
+            "unknown 'tag', unknown 'titel', missing 'title'; accepted keys are 'title', 'author', 'description', 'date', 'tags', 'draft'"
+        ),
+        "{err}"
+    );
+    assert_eq!(snapshot(&out), before, "output changed");
+}
+
+// AC-risk-4.3.3
+#[test]
+fn build_fails_on_unknown_frontmatter_key_in_draft() {
+    let dir = temp_dir("build_fails_on_unknown_frontmatter_key_in_draft");
+    let site = dir.join("site");
+    write_file(&site.join("posts/good.md"), &page("Good", false));
+    write_file(
+        &site.join("posts/draft_keys.md"),
+        "---\n{\"title\": \"Draft\", \"author\": \"tester\", \"description\": \"desc\", \"dates\": \"2026-01-24\", \"draft\": true}\n---\n# Draft\n",
+    );
+
+    let output = build_temp_site(&site, &dir.join("dist"));
+
+    assert_failure(&output, "unknown key in draft");
+    assert_eq!(output.status.code(), Some(1));
+    let err = stderr(&output);
+    assert!(err.contains("draft_keys.md"), "{err}");
+    assert!(err.contains("unknown 'dates'"), "{err}");
+}
+
 // AC-2.6 (batch 4)
 #[test]
 fn build_fails_on_tags_folder_collision() {
