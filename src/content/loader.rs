@@ -375,7 +375,7 @@ mod tests {
     #[test]
     fn missing_required_key_is_a_frontmatter_error_naming_the_file() {
         let site = fixture_dir("missing_required_key");
-        let file = site.join("posts/no_title.md");
+        let file = site.join("posts").join("no_title.md");
         write_file(
             &file,
             "---\n{\"author\": \"a\", \"description\": \"d\", \"draft\": false}\n---\nbody\n",
@@ -392,7 +392,7 @@ mod tests {
     #[test]
     fn key_errors_win_over_date_tag_and_file_name_errors() {
         let site = fixture_dir("key_errors_win_over_date_tag_and_file_name_errors");
-        let file = site.join("my posts/x.md");
+        let file = site.join("my posts").join("x.md");
         write_file(
             &file,
             "---\n{\"title\": \"t\", \"author\": \"a\", \"description\": \"d\", \"draft\": false, \"date\": \"2026-02-30\", \"tags\": [\"Rust\"], \"tag\": []}\n---\nbody\n",
