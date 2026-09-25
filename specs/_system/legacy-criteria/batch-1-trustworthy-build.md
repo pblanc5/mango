@@ -77,6 +77,6 @@ From the run's test report (`03-test.v1.md`), mapping each criterion to the test
 | AC-4.3 | baseline | `build_generates_site_from_fixture` (`assets/minimal/main.css`) | pass |
 | AC-5.1 | new | `render::template::tests::page_context_includes_description` | pass |
 | AC-5.2 | new | `build_generates_site_from_fixture` meta-tag assertion, plus the ad-hoc grep (count 1) | pass |
-| AC-6.1 | changed | Manual review of `/home/roguestar/workspace/mango/CLAUDE.md`. Removed from known issues: asset recursion, stdout/exit 0, ignored `fs::copy` failures, `let _ =`. Kept: home stub, `config` context, clap `//`. The "asserts on output files instead" wording is corrected | pass |
+| AC-6.1 | changed | Manual review of `CLAUDE.md`. Removed from known issues: asset recursion, stdout/exit 0, ignored `fs::copy` failures, `let _ =`. Kept: home stub, `config` context, clap `//`. The "asserts on output files instead" wording is corrected | pass |
 | AC-6.2 | new | `cargo fmt --check` exit 0 | pass |
 | AC-6.3 | new | `cargo build`, `cargo test`, `cargo clippy` (and `--all-targets`) exit 0. The only warning is the old `home::build` dead-code warning | pass |

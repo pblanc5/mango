@@ -17,19 +17,19 @@ The pipeline builds one `Vec<Output>` in the AC-2.1 order. `check_collisions` ta
 ## Affected components
 | Component / file | Change |
 |---|---|
-| `/home/roguestar/workspace/mango/src/build/output.rs` | **New:** `Output`, `OutputKind` (with `Display` and derived `Debug, PartialEq, Eq`), `Body`, `RenderedOutput`, `Contents`, `Output::path(dist)`, plus `#[cfg(test)]` accessors `context()`, `template_name()` and `text()`. `check_collisions(dist, &[Output])` replaces the three-input version. `render(tera, dist, Vec<Output>)` replaces `render` and `render_generated`. `write(&[RenderedOutput])` writes text and copies files. `GeneratedFile`, `RenderedFile` and `render_generated` are removed. Unit tests are rewritten, and new tests are added (T-2, T-4). |
-| `/home/roguestar/workspace/mango/src/build/pipeline.rs` | Builds one `Vec<Output>` in AC-2.1 order, checks it, renders it, and stores `Vec<RenderedOutput>` in `BuildPlan` (field `outputs`, replacing `files` + `assets`). `outputs()` maps `Contents` to `PlannedOutput`. `commit` calls only `output::write`. `asset_dest` becomes `asset_folder`, the assets folder's name; its error text is unchanged. |
-| `/home/roguestar/workspace/mango/src/render/template.rs` | `RenderItem` is removed. `render_page`, `render_section_page`, `render_home_page`, `render_tag_index` and `render_tag_page` keep their names and parameters but return `Output`, with the kind set and `Body::Template { name: "<x>.html", context }`. Template names stay hardcoded here. Tests are rewritten (see AC-9.5 table). |
-| `/home/roguestar/workspace/mango/src/build/generate/content.rs` | `Result<Vec<Output>, MangoError>` |
-| `/home/roguestar/workspace/mango/src/build/generate/section.rs` | Returns `Vec<Output>`. Test rewritten. |
-| `/home/roguestar/workspace/mango/src/build/generate/home.rs` | `build` returns `Output`. Test helpers and one test rewritten. `recent_pages` is unchanged. |
-| `/home/roguestar/workspace/mango/src/build/generate/tag.rs` | Returns `Vec<Output>`. Tests rewritten. |
-| `/home/roguestar/workspace/mango/src/build/generate/feed.rs` | Returns `Option<Output>` (`Feed`, `Body::Text`). Tests use `.text()` and the kind. |
-| `/home/roguestar/workspace/mango/src/build/generate/sitemap.rs` | `build(impl IntoIterator<Item=&Output>, config) -> Option<Output>`. Selection and `<lastmod>` come from a private exhaustive `match` on `OutputKind`. Tests rewritten, and the AC-8.3 test added. |
-| `/home/roguestar/workspace/mango/src/build/generate/assets.rs` | `AssetFile` and `copy` are removed. `plan(assets_source, folder)` returns `Vec<Output>` (`Asset { folder, rel }`, `Body::Copy(source)`), sorted by `rel`. Tests go through `output::render` + `output::write`. Safety-net test added (T-2). |
-| `/home/roguestar/workspace/mango/tests/plan.rs` | Safety-net in-process tests (T-1), including the AC-7.4 test. No existing test changes. |
-| `/home/roguestar/workspace/mango/CLAUDE.md` | Pipeline, feed/sitemap and module-map text updated to describe the single model (AC-10.1). |
-| `/home/roguestar/workspace/mango/specs/_system/backlog.md` | ARCH-2 marked `done` with a Landed note. ARCH-5 updated. RISK-7 and RISK-8 added (AC-10.2). |
+| `src/build/output.rs` | **New:** `Output`, `OutputKind` (with `Display` and derived `Debug, PartialEq, Eq`), `Body`, `RenderedOutput`, `Contents`, `Output::path(dist)`, plus `#[cfg(test)]` accessors `context()`, `template_name()` and `text()`. `check_collisions(dist, &[Output])` replaces the three-input version. `render(tera, dist, Vec<Output>)` replaces `render` and `render_generated`. `write(&[RenderedOutput])` writes text and copies files. `GeneratedFile`, `RenderedFile` and `render_generated` are removed. Unit tests are rewritten, and new tests are added (T-2, T-4). |
+| `src/build/pipeline.rs` | Builds one `Vec<Output>` in AC-2.1 order, checks it, renders it, and stores `Vec<RenderedOutput>` in `BuildPlan` (field `outputs`, replacing `files` + `assets`). `outputs()` maps `Contents` to `PlannedOutput`. `commit` calls only `output::write`. `asset_dest` becomes `asset_folder`, the assets folder's name; its error text is unchanged. |
+| `src/render/template.rs` | `RenderItem` is removed. `render_page`, `render_section_page`, `render_home_page`, `render_tag_index` and `render_tag_page` keep their names and parameters but return `Output`, with the kind set and `Body::Template { name: "<x>.html", context }`. Template names stay hardcoded here. Tests are rewritten (see AC-9.5 table). |
+| `src/build/generate/content.rs` | `Result<Vec<Output>, MangoError>` |
+| `src/build/generate/section.rs` | Returns `Vec<Output>`. Test rewritten. |
+| `src/build/generate/home.rs` | `build` returns `Output`. Test helpers and one test rewritten. `recent_pages` is unchanged. |
+| `src/build/generate/tag.rs` | Returns `Vec<Output>`. Tests rewritten. |
+| `src/build/generate/feed.rs` | Returns `Option<Output>` (`Feed`, `Body::Text`). Tests use `.text()` and the kind. |
+| `src/build/generate/sitemap.rs` | `build(impl IntoIterator<Item=&Output>, config) -> Option<Output>`. Selection and `<lastmod>` come from a private exhaustive `match` on `OutputKind`. Tests rewritten, and the AC-8.3 test added. |
+| `src/build/generate/assets.rs` | `AssetFile` and `copy` are removed. `plan(assets_source, folder)` returns `Vec<Output>` (`Asset { folder, rel }`, `Body::Copy(source)`), sorted by `rel`. Tests go through `output::render` + `output::write`. Safety-net test added (T-2). |
+| `tests/plan.rs` | Safety-net in-process tests (T-1), including the AC-7.4 test. No existing test changes. |
+| `CLAUDE.md` | Pipeline, feed/sitemap and module-map text updated to describe the single model (AC-10.1). |
+| `specs/_system/backlog.md` | ARCH-2 marked `done` with a Landed note. ARCH-5 updated. RISK-7 and RISK-8 added (AC-10.2). |
 
 Not changed: `README.md` (AC-9.7), `tests/build.rs`, `example/`, `src/content/*` (including `Slug::output_path(dist)`, which arch-3 AC-5.3 requires), `src/lib.rs`, `Cargo.toml` and `specs/_system/overview.md` (DOC-1).
 

@@ -2,29 +2,29 @@
 
 # Split the build into plan and commit; add a library crate: Design
 
-Spec ID: `arch-1` · Requirements: `/home/roguestar/workspace/mango/specs/arch-1/requirements.md`
+Spec ID: `arch-1` · Requirements: `specs/arch-1/requirements.md`
 
 ## Overview
-Today `cli::build` (`/home/roguestar/workspace/mango/src/cli.rs:89-171`) does everything in one function. The design cuts it at line 152/154 (after the last `output::render`, before `current_dir`/`ensure_safe_to_clean`): everything above becomes `plan()`, which returns a `BuildPlan` whose fields are private; everything below becomes `commit(plan)`, which is the only function that calls `clean_contents`, `output::write` and `assets::copy`. The crate gains `src/lib.rs`, whose module tree is entirely private and which re-exports exactly seven items (`plan`, `commit`, `clean`, `BuildOptions`, `BuildPlan`, `PlannedOutput`, `MangoError`). Because every module is private, a `pub` item that nothing uses still triggers the dead-code lint, so the "no dead code" rule stays compiler-enforced everywhere except those seven names. The clap definitions stay in `src/cli.rs`, which becomes a module of the **binary** only (`mod cli;` in `main.rs`), so the binary parses and dispatches and nothing else. In-process tests live in a new integration test file `tests/plan.rs` that uses only the public API, which is the same surface FEAT-1 will consume. No message, flag, output byte or exit code changes.
+Today `cli::build` (`src/cli.rs:89-171`) does everything in one function. The design cuts it at line 152/154 (after the last `output::render`, before `current_dir`/`ensure_safe_to_clean`): everything above becomes `plan()`, which returns a `BuildPlan` whose fields are private; everything below becomes `commit(plan)`, which is the only function that calls `clean_contents`, `output::write` and `assets::copy`. The crate gains `src/lib.rs`, whose module tree is entirely private and which re-exports exactly seven items (`plan`, `commit`, `clean`, `BuildOptions`, `BuildPlan`, `PlannedOutput`, `MangoError`). Because every module is private, a `pub` item that nothing uses still triggers the dead-code lint, so the "no dead code" rule stays compiler-enforced everywhere except those seven names. The clap definitions stay in `src/cli.rs`, which becomes a module of the **binary** only (`mod cli;` in `main.rs`), so the binary parses and dispatches and nothing else. In-process tests live in a new integration test file `tests/plan.rs` that uses only the public API, which is the same surface FEAT-1 will consume. No message, flag, output byte or exit code changes.
 
 ## Affected components
 | Component / file | Change |
 |---|---|
-| `/home/roguestar/workspace/mango/Cargo.toml` | **No edit.** With both `src/lib.rs` and `src/main.rs` present Cargo auto-detects a lib and a bin target, both named `mango`. No `[lib]` section, no dependency change (AC-6.5). |
-| `/home/roguestar/workspace/mango/src/lib.rs` (new) | Library root: `mod build; mod config; mod content; mod error; mod render;` (all private) plus the seven `pub use` re-exports. Doc comment states the internal-seam rule (AC-9.3 wording also goes in `CLAUDE.md`). |
-| `/home/roguestar/workspace/mango/src/main.rs` | Becomes `mod cli;` + `fn main()` (unchanged stderr/exit-code handling). The five private `mod` lines for the pipeline modules go. |
-| `/home/roguestar/workspace/mango/src/cli.rs` | Binary-only module. Keeps `BuildOpts`, `CleanOpts`, `MangoActions`, `MangoCli` and `run()` verbatim (help text, defaults, `not implemented` text). `build()`, `clean()`, `current_dir()`, `ensure_safe_to_clean()`, `clean_contents()` and the whole `#[cfg(test)]` module leave. Dispatch becomes `Build(opts) => mango::commit(mango::plan(&opts.into_options())?)`, `Clean(opts) => mango::clean(Path::new(&opts.dist))`. |
-| `/home/roguestar/workspace/mango/src/build/mod.rs` | Add `pub mod clean;` and `pub mod pipeline;`. |
-| `/home/roguestar/workspace/mango/src/build/pipeline.rs` (new) | `BuildOptions`, `BuildPlan`, `PlannedOutput`, `plan()`, `commit()`. The body of `plan()` is `cli.rs:90-152` moved; the body of `commit()` is `cli.rs:154-170` moved. |
-| `/home/roguestar/workspace/mango/src/build/clean.rs` (new) | `ensure_safe_to_clean`, `clean_contents`, `current_dir` (moved verbatim from `cli.rs:190-266`, `pub(crate)`), `pub fn clean(dist: &Path)` (the `mango clean` operation, `cli.rs:173-188` verbatim), and the seven moved unit tests with their legacy tags; fixture dir becomes `target/unit-fixtures/clean/`. |
-| `/home/roguestar/workspace/mango/src/build/output.rs` | `#[derive(Debug)]` on `RenderedFile` (so `BuildPlan: Debug`, needed by `expect_err` in tests). Nothing else. |
-| `/home/roguestar/workspace/mango/src/error.rs` | `io_at` becomes `pub(crate)`: it is used only inside the crate and would otherwise be part of the public surface through the re-exported `MangoError`. |
-| `/home/roguestar/workspace/mango/tests/plan.rs` (new) | 13 in-process tests against the public API (11 new, 2 moved from `tests/build.rs`), with their own small helpers. |
-| `/home/roguestar/workspace/mango/tests/build.rs` | Two safety-net tests added (T-1, T-2); `home_recent_respects_recent_count_and_skips_undated` and `build_excludes_draft_pages` removed (moved to `tests/plan.rs`). No other line changes. |
-| `/home/roguestar/workspace/mango/CLAUDE.md` | `build`/`clean` bullets, module map, tests convention, internal-seam statement (AC-9.1, AC-9.3). |
-| `/home/roguestar/workspace/mango/specs/_system/overview.md` | Only the line-13 sentence "There is no library crate: …" (AC-9.4). |
-| `/home/roguestar/workspace/mango/specs/_system/backlog.md` | ARCH-1 `open` → `done` in the index row and item header, with a short landed-summary paragraph in the style of RISK-1/RISK-2 (AC-9.2). |
-| `/home/roguestar/workspace/mango/README.md` | **No edit** (AC-8.4; checked: it mentions neither `cli.rs`, `lib.rs` nor a library, and the "Known limitations" section is unaffected). |
+| `Cargo.toml` | **No edit.** With both `src/lib.rs` and `src/main.rs` present Cargo auto-detects a lib and a bin target, both named `mango`. No `[lib]` section, no dependency change (AC-6.5). |
+| `src/lib.rs` (new) | Library root: `mod build; mod config; mod content; mod error; mod render;` (all private) plus the seven `pub use` re-exports. Doc comment states the internal-seam rule (AC-9.3 wording also goes in `CLAUDE.md`). |
+| `src/main.rs` | Becomes `mod cli;` + `fn main()` (unchanged stderr/exit-code handling). The five private `mod` lines for the pipeline modules go. |
+| `src/cli.rs` | Binary-only module. Keeps `BuildOpts`, `CleanOpts`, `MangoActions`, `MangoCli` and `run()` verbatim (help text, defaults, `not implemented` text). `build()`, `clean()`, `current_dir()`, `ensure_safe_to_clean()`, `clean_contents()` and the whole `#[cfg(test)]` module leave. Dispatch becomes `Build(opts) => mango::commit(mango::plan(&opts.into_options())?)`, `Clean(opts) => mango::clean(Path::new(&opts.dist))`. |
+| `src/build/mod.rs` | Add `pub mod clean;` and `pub mod pipeline;`. |
+| `src/build/pipeline.rs` (new) | `BuildOptions`, `BuildPlan`, `PlannedOutput`, `plan()`, `commit()`. The body of `plan()` is `cli.rs:90-152` moved; the body of `commit()` is `cli.rs:154-170` moved. |
+| `src/build/clean.rs` (new) | `ensure_safe_to_clean`, `clean_contents`, `current_dir` (moved verbatim from `cli.rs:190-266`, `pub(crate)`), `pub fn clean(dist: &Path)` (the `mango clean` operation, `cli.rs:173-188` verbatim), and the seven moved unit tests with their legacy tags; fixture dir becomes `target/unit-fixtures/clean/`. |
+| `src/build/output.rs` | `#[derive(Debug)]` on `RenderedFile` (so `BuildPlan: Debug`, needed by `expect_err` in tests). Nothing else. |
+| `src/error.rs` | `io_at` becomes `pub(crate)`: it is used only inside the crate and would otherwise be part of the public surface through the re-exported `MangoError`. |
+| `tests/plan.rs` (new) | 13 in-process tests against the public API (11 new, 2 moved from `tests/build.rs`), with their own small helpers. |
+| `tests/build.rs` | Two safety-net tests added (T-1, T-2); `home_recent_respects_recent_count_and_skips_undated` and `build_excludes_draft_pages` removed (moved to `tests/plan.rs`). No other line changes. |
+| `CLAUDE.md` | `build`/`clean` bullets, module map, tests convention, internal-seam statement (AC-9.1, AC-9.3). |
+| `specs/_system/overview.md` | Only the line-13 sentence "There is no library crate: …" (AC-9.4). |
+| `specs/_system/backlog.md` | ARCH-1 `open` → `done` in the index row and item header, with a short landed-summary paragraph in the style of RISK-1/RISK-2 (AC-9.2). |
+| `README.md` | **No edit** (AC-8.4; checked: it mentions neither `cli.rs`, `lib.rs` nor a library, and the "Known limitations" section is unaffected). |
 
 ## Approach
 
@@ -176,43 +176,43 @@ No test is deleted outright. Unit tests moved from `src/cli.rs` to `src/build/cl
 ### T-1 Safety net: pin the failure precedence of the build order
 - Kind: safety-net
 - Satisfies: AC-1.1, AC-1.2, AC-1.3, AC-8.3
-- Files: `/home/roguestar/workspace/mango/tests/build.rs`
+- Files: `tests/build.rs`
 - Done when: `build_reports_first_failure_in_pipeline_order` (tag `// AC-arch-1.1.1; AC-arch-1.1.2; AC-arch-1.1.3; AC-arch-1.8.3`) builds a temp site with a frontmatter-less page, malformed `--config`, missing `--templates`, missing `--assets` and a marker file in the output; asserts, fixing one input at a time, that stderr names in turn the bad page (not the config), the config (not the templates), the templates (not the assets), the assets, with `snapshot(&out)` unchanged each time, and finally succeeds and removes the marker. Passes on the baseline code.
 
 ### T-2 Safety net: pin the `./<site>` error form
 - Kind: safety-net
 - Satisfies: AC-3.3
-- Files: `/home/roguestar/workspace/mango/tests/build.rs`
+- Files: `tests/build.rs`
 - Done when: `build_names_relative_site_path_with_dot_prefix` (tag `// AC-arch-1.3.3`) runs `build --site nowhere` from a temp cwd with absolute fixture templates/assets and an absolute `-o`; asserts exit 1, stderr contains `format!("{} is not a directory", Path::new(".").join("nowhere").display())`, and the output folder does not exist. Passes on the baseline code.
 
 ### T-3 Move the clean and safety logic into the crate (`src/build/clean.rs`)
 - Kind: implementation
 - Satisfies: AC-1.5, AC-1.6, AC-3.4, AC-6.3
-- Files: `/home/roguestar/workspace/mango/src/build/clean.rs`, `/home/roguestar/workspace/mango/src/build/mod.rs`, `/home/roguestar/workspace/mango/src/cli.rs`
+- Files: `src/build/clean.rs`, `src/build/mod.rs`, `src/cli.rs`
 - Done when: `ensure_safe_to_clean`, `clean_contents`, `current_dir` (`pub(crate)`) and `clean` (`pub`) live in `clean.rs` with bodies unchanged; the seven unit tests move with their tag comments, using `target/unit-fixtures/clean/`; `cli.rs` calls them through `crate::build::clean`; the gate passes and every E2E test is unchanged.
 
 ### T-4 The seam: `pipeline.rs`, `lib.rs`, and a parse-and-dispatch `cli.rs`
 - Kind: implementation
 - Satisfies: AC-4.1, AC-4.3, AC-4.4, AC-4.5, AC-4.6, AC-4.7, AC-4.8, AC-4.9, AC-4.10, AC-5.1, AC-5.4, AC-1.7, AC-2.1, AC-3.1, AC-3.2, AC-3.3, AC-3.5, AC-3.6, AC-6.1, AC-6.2, AC-6.4, AC-6.5, AC-8.2
-- Files: `/home/roguestar/workspace/mango/src/build/pipeline.rs`, `/home/roguestar/workspace/mango/src/build/mod.rs`, `/home/roguestar/workspace/mango/src/lib.rs`, `/home/roguestar/workspace/mango/src/main.rs`, `/home/roguestar/workspace/mango/src/cli.rs`, `/home/roguestar/workspace/mango/src/build/output.rs`, `/home/roguestar/workspace/mango/src/error.rs`
+- Files: `src/build/pipeline.rs`, `src/build/mod.rs`, `src/lib.rs`, `src/main.rs`, `src/cli.rs`, `src/build/output.rs`, `src/error.rs`
 - Done when: `pipeline.rs` defines the types and functions exactly as in "Interfaces and data", `plan()` being `cli.rs:90-152` and `commit()` being `cli.rs:154-170` with the `./`-join and default-config behaviour preserved; `lib.rs` declares five private modules and the seven re-exports only; `main.rs` is `mod cli;` plus `main()`; `cli.rs` holds only the clap structs, `run()`, `into_options()` and the `not implemented` arm, and `build()`/`clean()` and the safety/clean helpers are gone from it; `RenderedFile` derives `Debug`; `MangoError::io_at` is `pub(crate)`; `Cargo.toml` is untouched; `grep -n "fs::\|remove_\|write(" src/build/pipeline.rs` shows no filesystem mutation outside `commit`; the gate passes with every test in `tests/build.rs` unchanged.
 
 ### T-5 In-process tests (`tests/plan.rs`) and the two moves
 - Kind: test
 - Satisfies: AC-7.1, AC-7.2, AC-7.4, AC-7.5, AC-7.6, AC-7.7, AC-7.8, AC-7.9, AC-7.10, AC-7.11, AC-4.2, AC-4.3, AC-4.4, AC-4.6, AC-4.7, AC-4.8, AC-5.1, AC-5.2, AC-5.3, AC-5.4, AC-6.3, AC-2.2, AC-2.3
-- Files: `/home/roguestar/workspace/mango/tests/plan.rs`, `/home/roguestar/workspace/mango/tests/build.rs`
+- Files: `tests/plan.rs`, `tests/build.rs`
 - Done when: the 13 tests listed under "Test strategy" exist with the stated tags (`// AC-arch-1.<req>.<m>`, moved tests also keeping their legacy tag), use only `mango::{plan, commit, clean, BuildOptions, BuildPlan, PlannedOutput, MangoError}`, never spawn the binary or change the cwd; `home_recent_respects_recent_count_and_skips_undated` and `build_excludes_draft_pages` are removed from `tests/build.rs` and nothing else there changes; `cargo clippy --all-targets -- -D warnings` is clean for the new test crate (no unused helper).
 
 ### T-6 Docs and backlog
 - Kind: docs
 - Satisfies: AC-9.1, AC-9.2, AC-9.3, AC-9.4, AC-8.4, AC-1.4
-- Files: `/home/roguestar/workspace/mango/CLAUDE.md`, `/home/roguestar/workspace/mango/specs/_system/overview.md`, `/home/roguestar/workspace/mango/specs/_system/backlog.md`
+- Files: `CLAUDE.md`, `specs/_system/overview.md`, `specs/_system/backlog.md`
 - Done when: `CLAUDE.md`'s `build` bullet describes `plan` → `commit` and restates the guarantee as "`commit` accepts only a `BuildPlan`, and only a successful `plan` produces one" (keeping the post-clean I/O limitation sentence); the `clean` bullet points at `build/clean.rs`; the module map has `src/lib.rs` (public surface = the seven re-exports; internal seam: may change freely, not documented in `README.md`, no semver promise), `src/main.rs`, binary-only `src/cli.rs`, `src/build/pipeline.rs`, `src/build/clean.rs`; the tests convention mentions `tests/plan.rs`; `overview.md` line 13 reads that the crate has a library target (`src/lib.rs`) and a binary (`src/main.rs` + `src/cli.rs`) with no other line touched; the backlog index row and ARCH-1 header say `done` with a short landed paragraph, and the FEAT-1, ARCH-2 and SPEC-3 dependency notes still read correctly; `README.md` has no diff.
 
 ### T-7 Gate and contract check
 - Kind: test
 - Satisfies: AC-6.6, AC-7.3, AC-8.1, AC-8.2, AC-8.3, AC-4.10
-- Files: none (verification only; `/home/roguestar/workspace/mango/tests/build.rs` is inspected, not edited)
+- Files: none (verification only; `tests/build.rs` is inspected, not edited)
 - Done when: `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` passes; `git diff <branch_point> -- tests/build.rs` contains only the two T-1/T-2 additions and the two T-5 removals; `git diff <branch_point> -- README.md Cargo.toml example/` is empty; `grep -rn "allow(dead_code)" src tests` is empty.
 
 ## Coverage
