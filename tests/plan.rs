@@ -572,7 +572,7 @@ fn draft_with_bad_frontmatter_date_or_tag_fails_planning() {
     ];
 
     for (label, body, value) in cases {
-        let path = p.site.join("posts/draft.md");
+        let path = p.site.join("posts").join("draft.md");
         write_file(&path, &body);
 
         let err = plan(&options(&p, None)).unwrap_err();
