@@ -11,4 +11,4 @@ Shortcut for `/run-workflow spec-init <input>`.
 2. Read `.claude/commands/run-workflow.md`. If there's no project copy, read `~/.claude/commands/run-workflow.md`.
 3. Follow its instructions exactly, as if it had been invoked with the arguments `spec-init <input>`.
 
-**Plan before executing (mandatory):** the extractor is read-only. Nothing is written to the project until you approve both drafts. If a constitution already exists, the drafts propose changes to it, and your hand edits are never overwritten without asking. Nothing is ever committed or pushed.
+**Plan before executing (mandatory):** the extractor is read-only. Nothing is written to the project until you approve both drafts. If a constitution already exists, the drafts propose changes to it, and your hand edits are never overwritten without asking. The run commits only checkpoints on its own branch. Nothing is pushed until you say “land it”, and you merge the pull request yourself.

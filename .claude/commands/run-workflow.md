@@ -22,7 +22,7 @@ Arguments: `$ARGUMENTS`
   - publishing that gate's approved documents to their `publish_to` paths
   - the stages and loops up to the next gate, within the caps in the workflow file
 - **When to stop:** a scope change, a `blocked` verdict, a verdict with no handler, an exhausted cap, or a publish conflict stops the run. Continuing needs the user again. After a scope change, continuing means re-planning and re-approving.
-- **Git:** you may create the run's own branch and commit to it (step 3.4, step 4.6a), and nothing else. Never `push` — this holds after the repository gains a remote, not just before: a run's output stays on this machine until the maintainer pushes it by hand. Never use `gh` or any other network write. Never `reset`, `stash`, `clean`, `rebase`, `commit --amend`, `checkout -- <path>`, or any forced operation: those destroy uncommitted work, and a run's output sits uncommitted in the working tree until its first checkpoint. Never commit onto a branch this run did not create. Personas may never use git except to read (`status`, `diff`, `log`, `show`).
+- **Git:** you may create the run's own branch and commit to it (step 3.4, step 4.6a), and `git fetch` to check the integration branch is current (step 3.2). You may push that branch and open its pull request, and only after the user says “land it” (step 7.1). Never push on your own initiative, never push the integration branch, and never force-push. From `gh`, use only `gh pr create`, `gh pr edit` (title or body of the run's own pull request), `gh pr view` and `gh pr checks`; never merge, approve, review or close a pull request, and make no other network write. Merging is the maintainer's act on GitHub. Never `reset`, `stash`, `clean`, `rebase`, `commit --amend`, `checkout -- <path>`, or any forced operation: those destroy uncommitted work, and a run's output sits uncommitted in the working tree until its first checkpoint. Never commit onto a branch this run did not create. Personas may never use git except to read (`status`, `diff`, `log`, `show`).
 
 ## 1. Parse arguments
 - **`--list`:** find workflows (see step 2). Validate each one and print:
@@ -65,12 +65,12 @@ Check all of the following. Collect **every** problem and stop if there are any.
    - Otherwise, up to 40 characters from the input, lowercase, a–z0–9 and hyphens.
    - Never carry file paths or instruction fragments into the slug. `specs-system-backlog-md-test-1-no-test` is what this rule prevents: the path is noise, the ID is buried, and `no-test` was a fragment of the prompt that inverts the item's meaning.
 2. **Start state. Gate before anything is written.** If `git rev-parse --is-inside-work-tree` succeeds, record `head` (`git rev-parse HEAD`, or `null` if there are no commits), `branch_now` (`git rev-parse --abbrev-ref HEAD`), `dirty` (the lines of `git status --porcelain`, excluding `.dev-pipeline/`) and `integration_branch`, resolved in order: (1) `git symbolic-ref --short refs/remotes/origin/HEAD` with `origin/` stripped; (2) otherwise whichever of `main` or `master` exists locally; (3) if both exist or neither does, stop and ask the user which one — never guess. Below, `<int>` means the resolved value. Then gate on them **before** creating the run folder or any other file, so a refused run leaves nothing behind:
-   - **On `<int>`, clean** → continue to step 3.3.
+   - **On `<int>`, clean** → if a remote exists, `git fetch` and compare with `origin/<int>`. If the local branch is behind, stop and ask, offering `git pull --ff-only`; create nothing until it is current. Otherwise continue to step 3.3.
    - **On `agents/claude/<slug>` for this run's own slug, clean** → a resume. Continue, reuse that branch, and do not nest another.
    - **On any other branch** — a `users/…` branch, or an `agents/claude/…` branch for a different item — **stop and ask.** Create nothing: no run folder, no state file, no branch. Report `branch_now` and how far ahead of `<int>` it is (`git rev-list --count <int>..HEAD`), then offer:
-     - **(a)** stop, so the maintainer can finish that work and squash-merge it first — the default, and what you recommend;
+     - **(a)** stop, so the maintainer can finish that work and land it first — the default, and what you recommend;
      - **(b)** start anyway from `<int>` (`git checkout -b agents/claude/<slug> <int>`), leaving the current branch untouched;
-     - **(c)** branch from the current branch deliberately. This stacks the run on unlanded work, so the eventual squash-merge carries that work to `<int>` too. Record `"branch_point_override": "<branch_now>"` in state and repeat that consequence in the final report.
+     - **(c)** branch from the current branch deliberately. This stacks the run on unlanded work, so the eventual pull request carries that work to `<int>` too. Record `"branch_point_override": "<branch_now>"` in state and repeat that consequence in the final report.
 
      End your turn and wait.
    - **Dirty tree, on any branch** → stop and ask the same way, offering only **(a)**. The run needs a clean tree to branch and checkpoint. Report the dirty paths.
@@ -275,10 +275,18 @@ If `state.branch` is set and it is not the current branch, check it out before c
    - **published documents** (from `published`)
    - **files changed:** in a git repo, `git diff --stat <branch point>..HEAD` plus any still-uncommitted paths; otherwise the Developer's listed files
    - **branch and checkpoints:** the branch name and one line per checkpoint (`<stage> v<attempt>  <sha>  <summary>`)
-   - a closing line, when a branch was created: **Nothing is on `<int>`.** The work is on `<branch>` as `<n>` checkpoint commits. Review with `git diff <int>..<branch>`, then say the word and I will squash-merge it to `<int>` with a message you approve and delete the branch. To discard it instead: `git checkout <int> && git branch -D <branch>`.
+   - a closing line, when a branch was created: **Nothing is on `<int>` or on GitHub.** The work is on `<branch>` as `<n>` checkpoint commits. Review with `git diff <int>..<branch>`, then say **“land it”** and I will push the branch and open a pull request (step 7.1) for you to review and merge on GitHub. To discard it instead: `git checkout <int> && git branch -D <branch>`.
    - when there is no branch, which now happens only outside a git repo: **Nothing was committed, and this is not a git repo.** The run's output is in the working tree — review the files listed above and save them however this project tracks work.
 
-   **Never squash-merge on your own initiative.** The user asks, every time.
+   **Never push or open a pull request on your own initiative.** The user says “land it”, every time.
+
+### 7.1 Land (only when the user says “land it”)
+Follow **Landing** in `specs/constitution.md`:
+1. Push the run branch with `git push -u origin <branch>`.
+2. Open a pull request against `<int>` with `gh pr create`. The title is the squash subject, with the item ID where there is one. The body is a standalone squash message ending with the `Co-Authored-By` trailer: the repository squash-merges using the title and body. Report the URL.
+3. Watch CI with `gh pr checks --watch`, then report the result. On a red check, report the failing test and its cause. Fix nothing unless the user asks.
+4. Stop there. The maintainer reviews and merges or closes the pull request on GitHub; you never do.
+5. When the user says it is merged, confirm with `gh pr view`. Then run `git checkout <int> && git pull --ff-only`, delete the local branch, and run `git fetch --prune`.
 
 ## 8. Stop
 1. Set `status` to `stopped`, set `stop_reason` and `stop_detail`, and save state.
@@ -292,7 +300,7 @@ If `state.branch` is set and it is not the current branch, check it out before c
 ## Rules
 - **You write only two kinds of file:** files in `run_dir`, and approved documents to validated `publish_to` targets through step 5.1. Personas return content and you save it.
 - Never edit any other project file, run tests, write specs, or review code yourself.
-- Git: only the run branch and its checkpoints (step 0). Never push, even once a remote exists. Never squash-merge unless the user asks.
+- Git: only the run branch and its checkpoints (step 0). Push it and open its pull request only when the user says “land it” (step 7.1). Never merge, approve or close a pull request.
 - Never skip, reorder, or add stages, and never invent or change a verdict.
 - Save `state.json` after every state change so any run can be resumed.
 - Keep chat updates short. The detail lives in the artifacts.
