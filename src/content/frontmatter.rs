@@ -1,4 +1,7 @@
+use std::collections::BTreeMap;
+
 use serde::Deserialize;
+use serde::de::IgnoredAny;
 
 use crate::error::MangoError;
 
@@ -63,8 +66,14 @@ pub fn parse(content: String) -> Result<(Option<MangoFrontmatter>, String), Mang
 /// is reported together and ahead of any other problem, whatever order the
 /// keys appear in. Anything else (invalid JSON, a non-object, or an object
 /// whose keys are fine) goes to the typed parse and keeps its exact error.
+///
+/// The key check reads the object as keys with `IgnoredAny` values: those
+/// are skipped exactly as the typed parse skips an unknown field's value, so
+/// every object the typed parse accepts gets its keys checked (a
+/// `serde_json::Value` parse would reject `1e400`, a lone surrogate or deep
+/// nesting and let such a key through).
 fn parse_json(json: &str) -> Result<MangoFrontmatter, MangoError> {
-    if let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(json) {
+    if let Ok(map) = serde_json::from_str::<BTreeMap<String, IgnoredAny>>(json) {
         check_keys(&map)?;
     }
     serde_json::from_str::<MangoFrontmatter>(json)
@@ -74,7 +83,7 @@ fn parse_json(json: &str) -> Result<MangoFrontmatter, MangoError> {
 /// One error listing every unknown key (sorted byte-wise) and then every
 /// missing required key (in `REQUIRED_KEYS` order), plus the accepted keys
 /// when any key is unknown. A present key counts whatever its value.
-fn check_keys(map: &serde_json::Map<String, serde_json::Value>) -> Result<(), MangoError> {
+fn check_keys(map: &BTreeMap<String, IgnoredAny>) -> Result<(), MangoError> {
     let mut unknown: Vec<&str> = map
         .keys()
         .map(String::as_str)
@@ -325,6 +334,25 @@ mod tests {
             format!("invalid frontmatter keys: unknown 'tag'{ACCEPTED_SUFFIX}")
         );
         assert!(!msg.contains("missing"), "{msg}");
+    }
+
+    // AC-risk-4.3.1 The typed parse skips an unknown key's value without
+    // checking it, so the key check must accept the same values: a number out
+    // of `f64` range, a lone surrogate and nesting deeper than serde_json's
+    // recursion limit (128) still report the key instead of building silently.
+    #[test]
+    fn unknown_key_is_reported_whatever_its_value() {
+        let deep = format!("{}{}", "[".repeat(200), "]".repeat(200));
+        for value in ["1e400", r#""\udc00""#, deep.as_str()] {
+            let json = format!(
+                r#"{{"title": "t", "author": "a", "description": "d", "draft": false, "extra": {value}}}"#
+            );
+            assert_eq!(
+                frontmatter_error(&json),
+                format!("invalid frontmatter keys: unknown 'extra'{ACCEPTED_SUFFIX}"),
+                "{value}"
+            );
+        }
     }
 
     // AC-risk-4.5.2
