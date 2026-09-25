@@ -42,7 +42,7 @@ cd example && cargo run -- build
 cargo run -- build --site example/site --templates example/meta/templates --assets example/meta/assets -o example/dist
 ```
 
-**Path gotcha:** all CLI paths resolve relative to the current working directory, with defaults `site/`, `meta/templates/`, `meta/assets/`, `dist/`. The repo root has none of these — the sample site lives under `example/` (`example/site`, `example/meta`; generated `example/dist` is gitignored).
+**Path gotcha:** all CLI paths resolve relative to the current working directory, with defaults `site/`, `meta/templates/`, `meta/assets/`, `dist/`. The repo root has none of these — the sample site lives under `example/` (`example/site`, `example/meta`; generated `example/dist` is gitignored). **CI** (`.github/workflows/ci.yml`) runs the gate below on Linux and Windows on every push and pull request, with the toolchain from `rust-toolchain.toml`.
 
 ## CLI surface (`src/cli.rs`) and the plan/commit seam
 
@@ -75,7 +75,7 @@ cargo run -- build --site example/site --templates example/meta/templates --asse
 
 A change is done only when all of these hold:
 
-1. **The gate passes:** `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`. No new warnings, and no `#[allow]` added to hide one.
+1. **The gate passes:** `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`. No new warnings, and no `#[allow]` added to hide one. Once the change is pushed, CI must be green on both Linux and Windows.
 2. **Behavior is tested:** every behavior change or bug fix has a test that fails without it. Unit tests sit next to the code; anything visible from the CLI (exit code, stderr, output files) also gets an E2E test in `tests/build.rs`.
 3. **The fixture covers it:** a new success-path feature has content in `example/site` / `example/meta` / `example/mango.json`, and the output manifest in `build_generates_site_from_fixture` plus a `fixture_*` test are updated. Error cases get temp-site E2E tests, never fixture files.
 4. **Failures are safe and clear:** anything that can fail on bad input (content, file names, config, templates, assets, output conflicts) fails before the output folder is cleaned, proven with a `snapshot` test. The error is a `MangoError` printed to stderr with exit status 1, naming the file or path and the offending value.
