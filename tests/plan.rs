@@ -171,7 +171,7 @@ fn page_and_section_index_collision_fails_planning() {
         err.to_string(),
         format!(
             "Mango Error: output path '{}' would be written by both page 'posts' and section index 'posts'",
-            p.out.join("posts/index.html").display()
+            p.out.join("posts").join("index.html").display()
         )
     );
 }
@@ -196,7 +196,7 @@ fn file_vs_folder_conflict_fails_planning() {
         format!(
             "Mango Error: output path '{}' would be written as a file by RSS feed, but page 'feed.xml' needs it to be a directory for '{}'",
             p.out.join("feed.xml").display(),
-            p.out.join("feed.xml/index.html").display()
+            p.out.join("feed.xml").join("index.html").display()
         )
     );
 }
@@ -675,7 +675,7 @@ fn collision_labels_are_exact_for_reachable_kinds() {
         err.to_string(),
         format!(
             "Mango Error: output path '{}' would be written by both section index 'tags' and tag index",
-            p.out.join("tags/index.html").display()
+            p.out.join("tags").join("index.html").display()
         )
     );
 
@@ -695,7 +695,7 @@ fn collision_labels_are_exact_for_reachable_kinds() {
         err.to_string(),
         format!(
             "Mango Error: output path '{}' would be written by both tag page 'blog' and asset 'blog/index.html'",
-            p.out.join("tags/blog/index.html").display()
+            p.out.join("tags").join("blog").join("index.html").display()
         )
     );
 
@@ -714,7 +714,7 @@ fn collision_labels_are_exact_for_reachable_kinds() {
         format!(
             "Mango Error: output path '{}' would be written as a file by sitemap, but page 'sitemap.xml' needs it to be a directory for '{}'",
             p.out.join("sitemap.xml").display(),
-            p.out.join("sitemap.xml/index.html").display()
+            p.out.join("sitemap.xml").join("index.html").display()
         )
     );
 }
@@ -737,7 +737,7 @@ fn page_and_asset_collision_names_the_page_first() {
         err.to_string(),
         format!(
             "Mango Error: output path '{}' would be written by both page 'assets/x' and asset 'x/index.html'",
-            p.out.join("assets/x/index.html").display()
+            p.out.join("assets").join("x").join("index.html").display()
         )
     );
 }
