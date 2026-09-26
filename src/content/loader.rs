@@ -29,6 +29,7 @@ pub fn load(path: &Path) -> Result<Vec<Page>, MangoError> {
 fn traverse(site: &Path, dir: &Path, pages: &mut Vec<Page>) -> Result<(), MangoError> {
     for result in fs::read_dir(dir).map_err(|e| MangoError::io_at(dir, e))? {
         let entry = result.map_err(|e| MangoError::io_at(dir, e))?;
+        // First, before `metadata` or any read can fail on it.
         if is_hidden(&entry.file_name()) {
             continue;
         }
