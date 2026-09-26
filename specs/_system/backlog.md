@@ -30,7 +30,7 @@ Statuses: `open`, `done`, `dropped`. Sizes: **S** (one module, under a day), **M
 | [RISK-3](#risk-3) | Raw HTML in content is trusted but undocumented | low | S | `/ship-feature` | — | open |
 | [RISK-4](#risk-4) | Unknown frontmatter keys are silently ignored | medium | S | `/spec-feature` | — | done |
 | [RISK-5](#risk-5) | Unresolvable symlinks under `site/` are silently ignored | low | S | `/ship-feature` | — | open |
-| [RISK-6](#risk-6) | Backslashes in file names become folder separators | low | S | `/spec-feature` | — | open |
+| [RISK-6](#risk-6) | Backslashes in file names become folder separators | low | S | `/spec-feature` | — | done |
 | [RISK-7](#risk-7) | Asset-copy errors name the source, not the destination | low | S | `/ship-feature` | — | open |
 | [RISK-8](#risk-8) | Content page order depends on the filesystem | low | S | `/spec-feature` | — | open |
 | [RISK-9](#risk-9) | A JSON array is accepted as frontmatter | low | S | `/spec-feature` | — | open |
@@ -320,9 +320,9 @@ pulldown-cmark passes raw HTML through and templates print `page.content | safe`
 An entry under `site/` whose target cannot be resolved — a dangling symlink, or a chain that loops (`a -> b -> a`) — is skipped without a word by `loader::traverse`, which is the behavior inherited from `path.is_dir()`/`path.is_file()` swallowing I/O errors. `assets::plan` already treats both as `io_at` build errors (RISK-2), so the two modules deliberately differ. Making the loader strict is a user-visible behavior change for existing sites and has no bearing on the runaway traversal, so it was deferred from RISK-1. Decide whether a broken or looping link under `site/` should fail the build (and whether a warning is enough), then align the two modules or record why they differ. `content/loader.rs::tests::load_ignores_dangling_symlink` and `load_ignores_symlink_loop_chain` pin the current behavior.
 
 ### RISK-6
-**Backslashes in file names become folder separators** · low · S · `/spec-feature` · open
+**Backslashes in file names become folder separators** · low · S · `/spec-feature` · done
 
-`Slug::from_content_path` rewrites every `\` in the site-relative path to `/`, which is right on Windows (where `\` is a separator) but on Unix turns a single file literally named `a\b.md` into the slug `a/b`: it is published at `/a/b/` and creates a section `a` that has no folder, even though the file-name rule does not allow `\` in a name. This was kept unchanged by ARCH-3 and is pinned by `content::slug::tests::backslash_in_stem_becomes_separator`. Either reject `\` in a file name on platforms where it is not a separator (a user-visible strictness change, hence `/spec-feature`), or document the behavior in `README.md`.
+`Slug::from_content_path` rewrote every `\` in the site-relative path to `/`, which is right on Windows (where `\` is a separator) but on Unix turned a single file literally named `a\b.md` into the slug `a/b`: it was published at `/a/b/` and created a section `a` that had no folder, even though the file-name rule does not allow `\` in a name. ARCH-3 kept this unchanged and pinned it with a test that has since been removed. Resolved by `specs/risk-6/`, which chose rejection over documenting the behavior: `from_content_path` now splits only on the platform's own separators (`std::path::is_separator`), so on Linux and macOS a `\` in a file or folder name stays in its segment and gets the existing invalid-file-name error, naming the name as it is on disk (`'a\b'`), drafts included and before any collision check. Windows is unchanged. Breaking, recorded in `CHANGELOG.md` for 0.2.0. `tests/build.rs::build_fails_on_backslash_in_file_name_keeping_output` proves the previous output survives.
 
 ### RISK-7
 **Asset-copy errors name the source, not the destination** · low · S · `/ship-feature` · open

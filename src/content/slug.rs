@@ -1,6 +1,6 @@
 use std::{
     fmt,
-    path::{Path, PathBuf},
+    path::{Path, PathBuf, is_separator},
 };
 
 use serde::Serialize;
@@ -21,7 +21,9 @@ pub struct Slug(String);
 
 impl Slug {
     /// The slug of a content file: its path relative to `site`, without the
-    /// extension, with `/` separators. Every segment may only use ASCII
+    /// extension, with the platform's path separators (`/` on Unix, `/` and
+    /// `\` on Windows) written as `/`. On Unix a `\` inside a name is not a
+    /// separator but an invalid character. Every segment may only use ASCII
     /// letters, digits, `-`, `_` and `.`, and may not consist only of dots, so
     /// URLs, the feed and the sitemap need no encoding and no output lands
     /// outside its own folder.
@@ -31,7 +33,7 @@ impl Slug {
             .map_err(|_e| MangoError::General("unable to generate slug from path".into()))?
             .with_extension("")
             .to_string_lossy()
-            .replace('\\', "/");
+            .replace(is_separator, "/");
 
         Slug::parse(text, path)
     }
@@ -196,10 +198,65 @@ mod tests {
         );
     }
 
-    // AC-arch-3.7.7
+    // AC-risk-6.1.5, AC-risk-6.3.7: only the part below the site folder is
+    // checked, so characters the file-name rule rejects may appear in the
+    // site folder's own path.
     #[test]
-    fn backslash_in_stem_becomes_separator() {
-        assert_eq!(slug("site/a\\b.md").unwrap().to_string(), "a/b");
+    fn site_folder_path_is_not_part_of_any_segment() {
+        let site = Path::new("my site").join("a+b");
+        let file = site.join("posts").join("one.md");
+        assert_eq!(
+            Slug::from_content_path(&file, &site).unwrap().to_string(),
+            "posts/one"
+        );
+
+        #[cfg(unix)]
+        {
+            let site = Path::new("my\\site");
+            let file = site.join("posts").join("one.md");
+            assert_eq!(
+                Slug::from_content_path(&file, site).unwrap().to_string(),
+                "posts/one"
+            );
+        }
+    }
+
+    // AC-risk-6.3.1, AC-risk-6.3.2, AC-risk-6.3.3: on Unix a `\` is part of
+    // the name, gets the charset message naming the name as on disk, and
+    // never the dot-only message.
+    #[cfg(unix)]
+    #[test]
+    fn backslash_in_name_is_an_invalid_file_name() {
+        for (path, segment) in [
+            ("site/a\\b.md", "a\\b"),
+            ("site/x\\y/p.md", "x\\y"),
+            ("site/\\.md", "\\"),
+            ("site/..\\x.md", "..\\x"),
+        ] {
+            let err = slug(path).expect_err(path);
+            assert!(matches!(err, MangoError::General(_)), "{path}: {err:?}");
+            let msg = err.to_string();
+            assert_eq!(
+                msg,
+                format!(
+                    "Mango Error: {}: invalid file name '{segment}': {CHARSET_MESSAGE}",
+                    Path::new(path).display()
+                ),
+                "{path}"
+            );
+            assert!(!msg.contains(DOTS_MESSAGE), "{path}: {msg}");
+        }
+    }
+
+    // AC-risk-6.5.1: on Windows `\` is the folder separator.
+    #[cfg(windows)]
+    #[test]
+    fn backslash_separates_folders_on_windows() {
+        assert_eq!(
+            slug("site\\posts\\post_one.md").unwrap().to_string(),
+            "posts/post_one"
+        );
+        assert_eq!(slug("site\\a\\b.md").unwrap().to_string(), "a/b");
     }
 
     // AC-arch-3.1.6
