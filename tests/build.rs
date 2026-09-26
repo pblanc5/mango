@@ -2075,6 +2075,89 @@ fn build_fails_on_dot_only_file_name_keeping_output() {
     );
 }
 
+// AC-risk-6.3.1, AC-risk-6.3.2, AC-risk-6.3.4, AC-risk-6.3.8, AC-risk-6.4.1,
+// AC-risk-6.6.1: on Unix a `\` in a file or folder name is an invalid file
+// name, drafts included, and the previous output is kept.
+#[cfg(unix)]
+#[test]
+fn build_fails_on_backslash_in_file_name_keeping_output() {
+    for (i, (parts, segment, draft)) in [
+        (&["a\\b.md"][..], "a\\b", false),
+        (&["x\\y", "p.md"][..], "x\\y", false),
+        (&["d\\e.md"][..], "d\\e", true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let dir = temp_dir(&format!("build_fails_on_backslash_in_file_name_{i}"));
+        let site = dir.join("site");
+        let out = dir.join("dist");
+        write_file(&site.join("posts").join("one.md"), &page("One", false));
+
+        assert_success(&build_temp_site(&site, &out));
+        write_file(&out.join("marker.txt"), "keep me");
+        let before = snapshot(&out);
+        let home_before = fs::read(out.join("index.html")).unwrap();
+
+        let file = parts
+            .iter()
+            .fold(site.clone(), |path, part| path.join(part));
+        write_file(&file, &page("Backslash", draft));
+        let output = build_temp_site(&site, &out);
+
+        assert_failure(&output, segment);
+        assert_eq!(output.status.code(), Some(1), "{segment}");
+        let err = stderr(&output);
+        assert!(
+            err.contains(&format!(
+                "{}: invalid file name '{segment}': use only ASCII letters, digits, '-', '_' and '.'",
+                file.display()
+            )),
+            "{err}"
+        );
+        assert_eq!(snapshot(&out), before, "{segment}: output changed");
+        assert_eq!(fs::read(out.join("index.html")).unwrap(), home_before);
+    }
+}
+
+// AC-risk-6.3.6: the file-name error comes before any collision check.
+#[cfg(unix)]
+#[test]
+fn backslash_name_fails_before_collision_check() {
+    for (i, other) in [&["a", "b.md"][..], &["a.md"][..]].into_iter().enumerate() {
+        let dir = temp_dir(&format!("backslash_name_fails_before_collision_check_{i}"));
+        let site = dir.join("site");
+        let out = dir.join("dist");
+        write_file(&site.join("a\\b.md"), &page("Backslash", false));
+        let other = other
+            .iter()
+            .fold(site.clone(), |path, part| path.join(part));
+        write_file(&other, &page("Other", false));
+
+        let output = build_temp_site(&site, &out);
+
+        assert_failure(&output, "backslash next to a colliding page");
+        assert_eq!(output.status.code(), Some(1));
+        let err = stderr(&output);
+        assert!(err.contains("invalid file name 'a\\b'"), "{err}");
+        assert!(!err.contains("would be written"), "{err}");
+        assert!(!out.exists(), "nothing may be written");
+    }
+}
+
+// AC-risk-6.3.7, AC-risk-6.6.5: a `\` in the site folder's own path is fine.
+#[cfg(unix)]
+#[test]
+fn build_accepts_backslash_in_site_folder_path() {
+    let dir = temp_dir("build_accepts_backslash_in_site_folder_path");
+    let site = dir.join("my\\site");
+    let out = dir.join("dist");
+    write_file(&site.join("posts").join("one.md"), &page("One", false));
+
+    assert_success(&build_temp_site(&site, &out));
+    assert!(out.join("posts").join("one").join("index.html").is_file());
+}
+
 #[test]
 fn build_accepts_utf8_bom_before_frontmatter() {
     let dir = temp_dir("build_accepts_utf8_bom_before_frontmatter");

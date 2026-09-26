@@ -441,6 +441,67 @@ mod tests {
         );
     }
 
+    // AC-risk-6.3.4
+    #[cfg(unix)]
+    #[test]
+    fn backslash_in_folder_name_is_rejected_even_for_drafts() {
+        let site = fixture_dir("backslash_in_folder_name_is_rejected_even_for_drafts");
+        let file = site.join("x\\y").join("p.md");
+        write_file(&file, &page("Draft", true));
+
+        let err = load(&site).expect_err("a backslash in a folder name must fail the load");
+        assert!(matches!(err, MangoError::General(_)), "{err:?}");
+        let msg = err.to_string();
+        assert!(msg.contains(&file.display().to_string()), "{msg}");
+        assert!(msg.contains("invalid file name 'x\\y'"), "{msg}");
+    }
+
+    // AC-risk-6.3.5
+    #[cfg(unix)]
+    #[test]
+    fn frontmatter_error_wins_over_backslash_in_name() {
+        for (i, extra) in ["\"tags\": [\"Rust\"]", "\"date\": \"2026-02-30\""]
+            .iter()
+            .enumerate()
+        {
+            let site = fixture_dir(&format!(
+                "frontmatter_error_wins_over_backslash_in_name_{i}"
+            ));
+            write_file(
+                &site.join("a\\b.md"),
+                &format!(
+                    "---\n{{\"title\": \"t\", \"author\": \"a\", \"description\": \"d\", \"draft\": false, {extra}}}\n---\nbody\n"
+                ),
+            );
+
+            let err = load(&site).expect_err("both errors present");
+            assert!(
+                matches!(err, MangoError::Frontmatter(_)),
+                "{extra}: {err:?}"
+            );
+            let msg = err.to_string();
+            let value = if i == 0 { "'Rust'" } else { "'2026-02-30'" };
+            assert!(msg.contains(value), "{msg}");
+            assert!(!msg.contains("invalid file name"), "{msg}");
+        }
+    }
+
+    // AC-risk-6.3.7: a `\` in the site folder's own path is not checked, and
+    // the filesystem accepts it in a folder name.
+    #[cfg(unix)]
+    #[test]
+    fn load_accepts_backslash_in_site_folder_path() {
+        let site = fixture_dir("load_accepts_backslash_in_site_folder_path").join("my\\site");
+        write_file(&site.join("posts").join("one.md"), &page("One", false));
+
+        let slugs: Vec<_> = load(&site)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.slug.to_string())
+            .collect();
+        assert_eq!(slugs, ["posts/one"]);
+    }
+
     // AC-11.1, AC-11.3
     #[cfg(unix)]
     #[test]

@@ -7,6 +7,7 @@ All notable changes to mango are recorded here, for the people who use it to bui
 ### Changed
 
 - **Breaking:** unknown frontmatter keys now fail the build, drafts included, so a typo such as `"tag"` for `"tags"` or `"dates"` for `"date"` no longer silently drops the page's tags or date. Only `title`, `author`, `description`, `date`, `tags` and `draft` are accepted, and keys are compared exactly. Each failing page gets one error that lists every unknown and every missing key, and the accepted keys. A site that used extra frontmatter keys must remove them before it builds again.
+- **Breaking:** on Linux and macOS, a file or folder name under the site folder that contains a backslash (`\`) now fails the build with an invalid-file-name error, drafts included, instead of being split into folders: `a\b.md` used to be published at `/a/b/`, in a section `a` that had no folder behind it. Rename such files and folders before building. Nothing changes on Windows, where `\` is the folder separator.
 
 ## [0.1.0] - 2026-09-25
 
