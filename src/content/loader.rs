@@ -460,12 +460,12 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn frontmatter_error_wins_over_backslash_in_name() {
-        for (i, extra) in ["\"tags\": [\"Rust\"]", "\"date\": \"2026-02-30\""]
-            .iter()
-            .enumerate()
-        {
+        for (label, extra, expected) in [
+            ("tag", "\"tags\": [\"Rust\"]", "'Rust'"),
+            ("date", "\"date\": \"2026-02-30\"", "'2026-02-30'"),
+        ] {
             let site = fixture_dir(&format!(
-                "frontmatter_error_wins_over_backslash_in_name_{i}"
+                "frontmatter_error_wins_over_backslash_in_name_{label}"
             ));
             write_file(
                 &site.join("a\\b.md"),
@@ -480,8 +480,7 @@ mod tests {
                 "{extra}: {err:?}"
             );
             let msg = err.to_string();
-            let value = if i == 0 { "'Rust'" } else { "'2026-02-30'" };
-            assert!(msg.contains(value), "{msg}");
+            assert!(msg.contains(expected), "{msg}");
             assert!(!msg.contains("invalid file name"), "{msg}");
         }
     }
