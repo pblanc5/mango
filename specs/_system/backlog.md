@@ -22,6 +22,7 @@ Statuses: `open`, `done`, `dropped`. Sizes: **S** (one module, under a day), **M
 | [OPS-1](#ops-1) | Continuous integration | medium | S | `/ship-feature` | a git remote | done |
 | [OPS-2](#ops-2) | Release process, changelog and binaries | medium | S | manual | OPS-1 | done |
 | [OPS-3](#ops-3) | Pipeline: evidence for design claims, and a route for design fixes | medium | S | manual | — | done |
+| [OPS-4](#ops-4) | Spec critic wraps its artifact in a code fence | low | S | manual | — | open |
 | [SPEC-1](#spec-1) | Confirm the constitution's open proposals | medium | S | manual | — | done |
 | [SPEC-2](#spec-2) | Publish the legacy acceptance criteria into tracked specs | medium | M | `/ship-feature` | — | done |
 | [SPEC-3](#spec-3) | Rewrite the legacy AC tags into spec-scoped form | low | M | `/ship-feature` | ARCH-1 | open |
@@ -34,8 +35,10 @@ Statuses: `open`, `done`, `dropped`. Sizes: **S** (one module, under a day), **M
 | [RISK-7](#risk-7) | Asset-copy errors name the source, not the destination | low | S | `/ship-feature` | — | open |
 | [RISK-8](#risk-8) | Content page order depends on the filesystem | low | S | `/spec-feature` | — | open |
 | [RISK-9](#risk-9) | A JSON array is accepted as frontmatter | low | S | `/spec-feature` | — | open |
+| [RISK-10](#risk-10) | Hidden files under `site/` are published | medium | S | `/spec-feature` | — | open |
 | [TEST-1](#test-1) | No test for CRLF line endings | low | S | `/ship-feature` | — | done |
 | [DOC-1](#doc-1) | Stale line references in the system overview | low | S | `/ship-feature` | — | done |
+| [DOC-2](#doc-2) | Line-number citations in the constitution | low | S | `/ship-feature` | — | open |
 
 Recommended order: ARCH-1 → ARCH-3 → ARCH-2, then ARCH-4 to ARCH-7 in any order. FEAT-1 comes after ARCH-1, which gives it the seam it needs; FEAT-2 is closed as dropped. FEAT-3 is independent and can be done at any time; if it lands before FEAT-1, FEAT-1 updates it. The RISK and TEST items are independent and can be done at any time. FEAT-4 would replace JSON frontmatter altogether, so decide on it before RISK-9, which it would make moot. OPS-3 changes only the dev pipeline and can be done at any time.
 
@@ -255,6 +258,13 @@ mango had a version (`0.1.0` in `Cargo.toml`) but no tag, no release and no chan
 - **Evidence:** `pipeline-architect.md` requires a source line in the locked version, fetched documentation or an existing test for every claim about external behavior. Its output template gains **Unverified assumptions** under Risks, and each unverified claim becomes the first safety-net task. On a re-run fed by a routed review, the Architect brings the design in line with the approved code and changes no requirement.
 - **Route:** the Reviewer adds `route: design` to a `changes-requested` artifact only when every blocking and should-fix finding is in the design and the code is correct; with code findings left, the code goes first. `scope_change` is reserved for wrong requirements. The Developer may depart from a wrong design inside the listed Files, marking it **design amendment needed** with evidence, and still never edits the design. `run-workflow.md` accepts the new stage key `on_design_changes` (its `goto` must be an earlier or the same stage with `gate: human`), validates `route`, and sends a routed review to that handler, whose design then stops for approval before develop, test and review run again. `spec-feature.yaml` routes review to `design` at most twice; `feature.yaml` has no design stage and is unchanged. The workflow template documents the key.
 
+### OPS-4
+**Spec critic wraps its artifact in a code fence** · low · S · manual · open
+
+In the RISK-6 and RISK-5 runs (2026-09-25), the spec critic twice returned its artifact wrapped in a ```` ```markdown ```` code fence, so the YAML frontmatter was not on the first line and the orchestrator had to re-request it (`format_error`). One of those replies also gave a finding count in its summary that did not match its findings table. The likely cause is that `.claude/agents/pipeline-spec-critic.md` shows its output template inside a `~~~markdown` fence, which the model copies; the other personas use the same template style but did not fence their replies in these runs. As a workaround, the orchestrator added a line to the critic's prompt ("Your final message must begin with the `---` frontmatter line itself: do not wrap it in a code fence"), which departs from `run-workflow.md`'s rule that persona prompts are passed exactly.
+
+**Done when.** The critic persona's Output rules say explicitly that the `~~~` fence only delimits the template and must not appear in the reply, and that the summary's finding counts must match the Findings table. If the same wording is added to the other personas for consistency, say so. The orchestrator's workaround line is no longer needed.
+
 ### SPEC-1
 **Confirm the constitution's open proposals** · medium · S · manual · done
 
@@ -339,6 +349,17 @@ When copying an asset fails during `commit`, `output::write` reports `IoPath` wi
 
 serde's derived deserializer for `MangoFrontmatter` also accepts a JSON array whose values are in field order, so a page whose frontmatter is `["t", "a", "d", null, null, false]` builds today, with no keys at all. RISK-4 left this alone on purpose: an array has no keys, so its key check doesn't apply, and the spec keeps non-object errors as they were (AC-5.1 in `specs/risk-4/requirements.md`; Risks in `specs/risk-4/design.md`). Nobody writes frontmatter this way on purpose, but it is a second, undocumented format. Proposal: reject any frontmatter that is not a JSON object, with an error naming the file. Because it rejects input that builds today, it is a `/spec-feature` change. [FEAT-4](#feat-4) would make this item moot.
 
+### RISK-10
+**Hidden files under `site/` are published** · medium · S · `/spec-feature` · open
+
+Every markdown file under `site/` is a page, including hidden ones: a file named `site/.notes.md` is published at `/.notes/` (confirmed with the binary on 2026-09-25 while specifying RISK-5, and pinned by `load_publishes_hidden_markdown_file`). So is anything in a hidden folder: `site/.drafts/secret.md` is published at `/.drafts/secret/`, and the folder gets a section index at `/.drafts/` that lists it (also confirmed with the binary). Under `meta/assets/`, a hidden file such as `.DS_Store` is copied into `dist/assets/`. Most static site generators skip names that start with `.`, and authors may keep scratch notes there expecting them to stay private. The repository being public makes this a real exposure for anyone copying the layout.
+
+Skipping hidden entries would also fix a consequence of RISK-5: Emacs marks a file being edited with a lock file `.#<name>`, a dangling symlink by design, which now fails the build (RISK-5 AC-2.3 chose no exemption). A hidden-entry rule applied before resolution would exempt it.
+
+**Settle these in the spec.** Whether to skip hidden files, hidden folders, or both; whether names starting with `_` are also skipped, as some generators do; whether the rule also applies under `meta/assets/` or only under `site/`; and whether a skipped entry is checked at all (a hidden broken symlink would then no longer fail the build). It changes which pages are published, so it is breaking, like RISK-4, RISK-5 and RISK-6.
+
+**Done when.** The rule is implemented and tested, `load_publishes_hidden_markdown_file` is replaced by a test of the new behavior, RISK-5's Emacs lock-file note is revisited, and `README.md` and `CHANGELOG.md` say which names are skipped.
+
 ### TEST-1
 **No test for CRLF line endings** · low · S · `/ship-feature` · done
 
@@ -352,3 +373,10 @@ End to end, `tests/build.rs::build_accepts_crlf_line_endings` builds a CRLF temp
 `specs/_system/overview.md` cites line numbers (e.g. in `src/cli.rs` and `example/meta/templates/page.html`) that moved in later commits. Refresh them, or cite functions instead of lines so they stay valid; ARCH-1 to ARCH-5 will move most of them again, so this is best done after those land. The "Risky areas" rows for `loader::traverse` and `assets::collect` are also stale now that RISK-1 and RISK-2 are done; refresh them in the same pass. So is the `frontmatter.rs` risk row: it cites `MangoFrontmatter` at `:8-16` and the CRLF handling at `:25` and `:35-36` (now `:23-31`, `:40` and `:50-51`), and still says "CRLF untested", although TEST-1 added those tests (flagged by the RISK-4 review). The repository is now public, so stale references are visible to every reader.
 
 Resolved by rewriting the overview rather than refreshing its numbers: it now cites functions, types, test names and README or CLAUDE.md section headings instead of line numbers, and the per-file line and test counts are gone, so it no longer drifts every time code moves. In the same pass it was brought up to date with ARCH-1/2/3 (the plan/commit seam, `lib.rs`, `build/pipeline.rs`, `build/clean.rs`, the single output model, `Slug` and `Tag`), RISK-1/2/4, TEST-1 and the FEAT-2 drop (`publish` is not a command). Its risk rows now record what is still open: RISK-3, RISK-5, RISK-7, RISK-8 and RISK-9.
+
+### DOC-2
+**Line-number citations in the constitution** · low · S · `/ship-feature` · open
+
+DOC-1 replaced every line-number citation in `specs/_system/overview.md` with symbol, test or section names so it stays valid when code moves. `specs/constitution.md` still has 43 such citations above its Changelog (for example `CLAUDE.md:75`, `README.md:110`, `Cargo.toml:4`), most of which have drifted as CLAUDE.md and README grew. Its Commands section also says the toolchain is Rust 1.92.0 "with rustfmt and clippy", while `rust-toolchain.toml` also lists `rust-analyzer`.
+
+**Done when.** Every citation above the constitution's Changelog names a section, symbol or file instead of a line; the toolchain line matches `rust-toolchain.toml`; historical Changelog rows stay verbatim; and a new Changelog row records the change.
