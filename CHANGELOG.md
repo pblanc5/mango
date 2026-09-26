@@ -4,6 +4,10 @@ All notable changes to mango are recorded here, for the people who use it to bui
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-25
+
+Stricter input rules. Each of the three changes below can make a site that built with 0.1.0 fail, with an error naming the file, before the output folder is touched. Fix the named file and build again.
+
 ### Changed
 
 - **Breaking:** unknown frontmatter keys now fail the build, drafts included, so a typo such as `"tag"` for `"tags"` or `"dates"` for `"date"` no longer silently drops the page's tags or date. Only `title`, `author`, `description`, `date`, `tags` and `draft` are accepted, and keys are compared exactly. Each failing page gets one error that lists every unknown and every missing key, and the accepted keys. A site that used extra frontmatter keys must remove them before it builds again.
@@ -29,5 +33,6 @@ The first release. Prebuilt binaries are available for Linux (x86_64, statically
 - Output is deterministic: two builds of the same input are byte-identical.
 - An example site with a complete theme in `example/`.
 
-[Unreleased]: https://github.com/pblanc5/mango/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/pblanc5/mango/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/pblanc5/mango/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/pblanc5/mango/releases/tag/v0.1.0
