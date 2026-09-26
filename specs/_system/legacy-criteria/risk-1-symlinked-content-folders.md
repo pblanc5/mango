@@ -24,6 +24,8 @@ Today a symlinked markdown file is loaded and a symlink to anything else is igno
 ### REQ-3 [baseline] An unresolvable symlink stays silently ignored
 Today a dangling link and a link chain that loops are both invisible to the loader, because `is_dir()`/`is_file()` return `false` on an I/O error. The rewrite must not change that by accident: making them an error is a deliberate strictness change, deferred to `RISK-5` (AC-11.15). These criteria are regression guards, not new behavior. (These two IDs carried a different, now-withdrawn assertion in v1; they are re-cast here on the maintainer's instruction and keep their numbers.)
 
+**Superseded 2026-09-25:** AC-11.6 and AC-11.7 no longer describe current behavior; they are superseded by `specs/risk-5/requirements.md` (RISK-5).
+
 - AC-11.6 [baseline] A dangling symlink under the site folder (`site/posts/broken.md -> <nonexistent>`) does not fail `load`: the call succeeds, the link produces no page, and the other pages in the site are returned as usual. True whether or not the link's name ends in `.md`.
 - AC-11.7 [baseline] A mutual link chain under the site folder (`a -> b`, `b -> a`) does not fail `load`: the call succeeds and terminates, and neither link produces a page.
 
