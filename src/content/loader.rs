@@ -31,15 +31,12 @@ fn traverse(site: &Path, dir: &Path, pages: &mut Vec<Page>) -> Result<(), MangoE
         // symlink to a folder is rejected here instead of being descended
         // into — which used to re-walk the whole site under the link,
         // silently publishing duplicate pages when it pointed at an
-        // ancestor. On `Err` (a dangling link, an `ELOOP` chain, an entry
-        // that vanished after `read_dir`) the entry is skipped: this is where
-        // `is_dir()`/`is_file()` used to swallow the error, and turning it
-        // into a build error is a deliberate strictness change, tracked as
-        // RISK-5 in specs/_system/backlog.md. Skipping stops the recursion
-        // just as well as failing would.
-        let Ok(target) = fs::metadata(path) else {
-            continue;
-        };
+        // ancestor. An entry that cannot be resolved (a dangling link, an
+        // `ELOOP` chain, an entry that vanished after `read_dir`) fails the
+        // load with an I/O error naming the link, the same error
+        // `assets::plan` gives. This runs before any name check, so no name
+        // is exempt, hidden ones included.
+        let target = fs::metadata(path).map_err(|e| MangoError::io_at(path, e))?;
 
         if target.is_dir() {
             if path.is_symlink() {
@@ -501,6 +498,26 @@ mod tests {
         assert_eq!(slugs, ["posts/one"]);
     }
 
+    // AC-risk-5.4.3 A hidden markdown file that resolves is published like
+    // any other page.
+    #[test]
+    fn load_publishes_hidden_markdown_file() {
+        let site = fixture_dir("load_publishes_hidden_markdown_file");
+        write_file(&site.join(".notes.md"), &page("Notes", false));
+        write_file(&site.join("posts").join("one.md"), &page("One", false));
+
+        let pages = load(&site).unwrap();
+        let mut slugs: Vec<_> = pages.iter().map(|p| p.slug.to_string()).collect();
+        slugs.sort();
+        assert_eq!(slugs, [".notes", "posts/one"]);
+
+        let notes = pages
+            .iter()
+            .find(|p| p.slug.to_string() == ".notes")
+            .unwrap();
+        assert_eq!(notes.slug.url(), "/.notes/");
+    }
+
     // AC-11.1, AC-11.3
     #[cfg(unix)]
     #[test]
@@ -614,44 +631,87 @@ mod tests {
         assert_eq!(slugs, ["posts/one"]);
     }
 
-    // AC-11.6 [baseline] An unresolvable symlink is ignored, not an error.
+    // AC-risk-5.5.1, AC-risk-5.2.1, AC-risk-5.2.3, AC-risk-5.2.5
     #[cfg(unix)]
     #[test]
-    fn load_ignores_dangling_symlink() {
+    fn load_fails_on_dangling_symlink() {
         use std::os::unix::fs::symlink;
 
-        let site = fixture_dir("load_ignores_dangling_symlink");
-        write_file(&site.join("posts/real.md"), &page("Real", false));
-        let missing = site.join("posts/nowhere");
-        symlink(&missing, site.join("posts/broken.md")).unwrap();
-        symlink(&missing, site.join("posts/broken.txt")).unwrap();
+        for (i, name) in ["broken.md", "broken.txt", "broken", ".#post.md"]
+            .iter()
+            .enumerate()
+        {
+            let dir = fixture_dir(&format!("load_fails_on_dangling_symlink_{i}"));
+            let site = dir.join("site");
+            write_file(&site.join("real.md"), &page("Real", false));
+            let link = site.join(name);
+            symlink(dir.join("missing-target"), &link).unwrap();
 
-        let mut slugs: Vec<_> = load(&site)
-            .expect("a dangling symlink must not fail the load")
-            .into_iter()
-            .map(|p| p.slug.to_string())
-            .collect();
-        slugs.sort();
-        assert_eq!(slugs, ["posts/real"]);
+            let err = load(&site).expect_err("a dangling symlink must fail the load");
+            let MangoError::IoPath { path, source } = &err else {
+                panic!("{name}: expected IoPath, got {err:?}");
+            };
+            assert_eq!(path, &link, "{name}");
+            assert_eq!(source.kind(), std::io::ErrorKind::NotFound, "{name}");
+
+            let msg = err.to_string();
+            let prefix = format!("Mango I/O Error at '{}': ", link.display());
+            assert!(msg.starts_with(&prefix), "{name}: {msg}");
+            assert!(msg.contains("(os error "), "{name}: {msg}");
+            // The link itself is named, not its target.
+            assert!(!msg.contains("missing-target"), "{name}: {msg}");
+        }
     }
 
-    // AC-11.7 [baseline] A looping link chain is ignored, not an error.
+    // AC-risk-5.5.2, AC-risk-5.2.2, AC-risk-5.2.5
     #[cfg(unix)]
     #[test]
-    fn load_ignores_symlink_loop_chain() {
+    fn load_fails_on_symlink_loop() {
         use std::os::unix::fs::symlink;
 
-        let site = fixture_dir("load_ignores_symlink_loop_chain");
-        write_file(&site.join("real.md"), &page("Real", false));
-        symlink("b.md", site.join("a.md")).unwrap();
-        symlink("a.md", site.join("b.md")).unwrap();
+        for (label, nested) in [("top_level", false), ("nested", true)] {
+            let site = fixture_dir(&format!("load_fails_on_symlink_loop_{label}"));
+            let folder = if nested {
+                write_file(&site.join("posts").join("real.md"), &page("Real", false));
+                site.join("posts")
+            } else {
+                write_file(&site.join("real.md"), &page("Real", false));
+                site.clone()
+            };
+            let a = folder.join("a.md");
+            let b = folder.join("b.md");
+            symlink("b.md", &a).unwrap();
+            symlink("a.md", &b).unwrap();
 
-        let mut slugs: Vec<_> = load(&site)
-            .expect("a symlink loop chain must not fail the load")
-            .into_iter()
-            .map(|p| p.slug.to_string())
-            .collect();
-        slugs.sort();
-        assert_eq!(slugs, ["real"]);
+            // The call must return: a loop fails once, it is not followed.
+            let err = load(&site).expect_err("a symlink loop must fail the load");
+            let MangoError::IoPath { path, source } = &err else {
+                panic!("{label}: expected IoPath, got {err:?}");
+            };
+            assert!(path == &a || path == &b, "{label}: {path:?}");
+            assert!(source.raw_os_error().is_some(), "{label}: {source:?}");
+            let msg = err.to_string();
+            assert!(msg.contains(&path.display().to_string()), "{label}: {msg}");
+        }
+    }
+
+    // AC-risk-5.5.3, AC-risk-5.2.1
+    #[cfg(unix)]
+    #[test]
+    fn load_fails_on_dangling_symlink_in_nested_folder() {
+        use std::os::unix::fs::symlink;
+
+        let dir = fixture_dir("load_fails_on_dangling_symlink_in_nested_folder");
+        let site = dir.join("site");
+        write_file(&site.join("posts").join("real.md"), &page("Real", false));
+        let link = site.join("posts").join("deep").join("broken.md");
+        fs::create_dir_all(link.parent().unwrap()).unwrap();
+        symlink(dir.join("missing-target"), &link).unwrap();
+
+        let err = load(&site).expect_err("a nested dangling symlink must fail the load");
+        let MangoError::IoPath { path, .. } = &err else {
+            panic!("expected IoPath, got {err:?}");
+        };
+        assert_eq!(path, &link);
     }
 }

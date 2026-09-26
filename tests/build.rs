@@ -1995,6 +1995,39 @@ fn build_reads_symlinked_markdown_file() {
     );
 }
 
+// AC-risk-5.5.4, AC-risk-5.2.6, AC-risk-5.3.1, AC-risk-5.2.5
+#[cfg(unix)]
+#[test]
+fn build_fails_on_dangling_symlink_in_site_keeping_output() {
+    use std::os::unix::fs::symlink;
+
+    let dir = temp_dir("build_fails_on_dangling_symlink_in_site_keeping_output");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    write_file(&site.join("posts").join("one.md"), &page("One", false));
+
+    assert_success(&build_temp_site(&site, &out));
+    write_file(&out.join("marker.txt"), "keep me");
+    let before = snapshot(&out);
+
+    let link = site.join("posts").join("broken.md");
+    symlink(dir.join("missing-target"), &link).unwrap();
+    let output = build_temp_site(&site, &out);
+
+    assert_failure(&output, "dangling symlink in site");
+    assert_eq!(output.status.code(), Some(1));
+    let err = stderr(&output);
+    let prefix = format!("Mango I/O Error at '{}': ", link.display());
+    assert!(err.contains(&prefix), "{err}");
+    assert!(err.contains("os error"), "{err}");
+    assert!(!err.contains("missing-target"), "{err}");
+    assert_eq!(
+        snapshot(&out),
+        before,
+        "a dangling symlink in the site must not touch the output"
+    );
+}
+
 #[test]
 fn build_accepts_any_case_md_and_markdown_extensions() {
     let dir = temp_dir("build_accepts_any_case_md_and_markdown_extensions");

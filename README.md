@@ -114,7 +114,7 @@ A build that fails on bad content, config, templates, assets or conflicting outp
 - No pagination, section intro pages, syntax highlighting or automatic heading IDs.
 - `clean` has no `--config` option, so it does not protect a config file stored inside the output folder.
 - A symlink inside `meta/assets/` may point at a file (its contents are copied), but a symlink to a folder is a build error: use a real folder. A broken link or a link loop is an error too. The `--assets` folder itself may be a symlink.
-- A symlink inside `site/` may point at a markdown file (it is read, and its URL comes from the link's path), but a symlink to a folder is a build error: use a real folder. Unlike in `meta/assets/`, a broken link or a link loop under `site/` is ignored rather than an error. The `--site` folder itself may be a symlink.
+- A symlink inside `site/` may point at a markdown file (it is read, and its URL comes from the link's path), but a symlink to a folder is a build error: use a real folder. As in `meta/assets/`, a broken link or a link loop under `site/` is a build error too, whatever the link's name. The `--site` folder itself may be a symlink.
 
 ## Development
 
