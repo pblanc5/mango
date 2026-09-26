@@ -92,6 +92,32 @@ fn build_with(site: &Path, templates: &Path, assets: &Path, out: &Path) -> Outpu
     )
 }
 
+/// Like `build_with`, but passes `--config <config>`.
+fn build_with_config(
+    site: &Path,
+    templates: &Path,
+    assets: &Path,
+    out: &Path,
+    config: &Path,
+) -> Output {
+    run_mango(
+        &[
+            "build",
+            "--site",
+            site.to_str().unwrap(),
+            "--templates",
+            templates.to_str().unwrap(),
+            "--assets",
+            assets.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+            "--config",
+            config.to_str().unwrap(),
+        ],
+        &root(),
+    )
+}
+
 /// Copy a directory tree (regular files and directories only).
 fn copy_dir(src: &Path, dest: &Path) {
     fs::create_dir_all(dest).unwrap();
@@ -1709,6 +1735,76 @@ fn fixture_build_is_deterministic() {
     }
 }
 
+/// The hidden entries committed in the fixture, as path segments under
+/// `example/`.
+const FIXTURE_HIDDEN: [&[&str]; 3] = [
+    &["site", "blog", ".scratch.md"],
+    &["site", ".notes", "post-ideas.md"],
+    &["meta", "assets", "css", ".stylelintrc.json"],
+];
+
+/// `base` joined with `segments`, one segment per `join`.
+fn join_all(base: &Path, segments: &[&str]) -> PathBuf {
+    segments
+        .iter()
+        .fold(base.to_path_buf(), |path, s| path.join(s))
+}
+
+// AC-risk-10.7.6, AC-risk-10.4.1, AC-risk-10.4.2, AC-risk-10.5.1: the
+// fixture's hidden page, hidden folder and hidden asset leave no trace.
+#[test]
+fn fixture_publishes_no_hidden_entries() {
+    let example = root().join("example");
+    for segments in FIXTURE_HIDDEN {
+        let path = join_all(&example, segments);
+        assert!(path.is_file(), "missing fixture file {}", path.display());
+    }
+
+    let out = fixture_dist();
+    assert_no_hidden_output(out);
+    for file in snapshot(out) {
+        let text = String::from_utf8_lossy(&fs::read(out.join(&file)).unwrap()).into_owned();
+        for title in ["Scratch pad", "Post ideas"] {
+            assert!(!text.contains(title), "{file} mentions '{title}'");
+        }
+    }
+    for file in ["feed.xml", "sitemap.xml"] {
+        assert!(
+            !fixture_file(file).contains("/."),
+            "{file} links a hidden path"
+        );
+    }
+}
+
+// AC-risk-10.6.3, AC-risk-10.4.4, AC-risk-10.5.4: the fixture builds exactly
+// as it would with its hidden entries deleted.
+#[test]
+fn fixture_output_is_unchanged_without_hidden_entries() {
+    let root = root();
+    let example = root.join("example");
+    let dir = temp_dir("fixture_output_is_unchanged_without_hidden_entries");
+    let copy = dir.join("example");
+    copy_dir(&example.join("site"), &copy.join("site"));
+    copy_dir(
+        &example.join("meta").join("assets"),
+        &copy.join("meta").join("assets"),
+    );
+    for segments in FIXTURE_HIDDEN {
+        fs::remove_file(join_all(&copy, segments)).unwrap();
+    }
+    fs::remove_dir(copy.join("site").join(".notes")).unwrap();
+
+    let out = dir.join("dist");
+    assert_success(&build_with_config(
+        &copy.join("site"),
+        &example.join("meta").join("templates"),
+        &copy.join("meta").join("assets"),
+        &out,
+        &example.join("mango.json"),
+    ));
+    assert_same_output(fixture_dist(), &out);
+}
+
 #[test]
 fn publish_is_not_a_command() {
     let dir = temp_dir("publish_is_not_a_command");
@@ -2075,37 +2171,130 @@ fn build_fails_on_invalid_file_name_naming_file() {
     }
 }
 
-// AC-arch-3.8.1, AC-arch-3.8.2: `...md` has the stem `..`, which used to
-// write `dist/../index.html`, outside the output folder.
+// AC-risk-10.3.5, AC-risk-10.7.7: `...md` and `..md` start with `.`, so they
+// are skipped as hidden. They used to fail with arch-3 AC-8.1's dot-only
+// error; nothing is written for them, least of all outside the output folder.
 #[test]
-fn build_fails_on_dot_only_file_name_keeping_output() {
-    let dir = temp_dir("build_fails_on_dot_only_file_name_keeping_output");
+fn build_skips_dot_only_file_name() {
+    let dir = temp_dir("build_skips_dot_only_file_name");
     let site = dir.join("site");
     let out = dir.join("dist");
-    write_file(&site.join("posts/one.md"), &page("One", false));
+    write_file(&site.join("posts").join("one.md"), &page("One", false));
 
     assert_success(&build_temp_site(&site, &out));
-    write_file(&out.join("marker.txt"), "keep me");
     let before = snapshot(&out);
     let home_before = fs::read(out.join("index.html")).unwrap();
 
     write_file(&site.join("...md"), &page("Dots", false));
+    write_file(&site.join("posts").join("..md"), &page("Dots", false));
     let output = build_temp_site(&site, &out);
 
-    assert_failure(&output, "dot-only file name");
-    let err = stderr(&output);
-    assert!(err.contains("...md"), "{err}");
-    assert!(err.contains("'..'"), "{err}");
-    assert!(
-        err.contains("a segment cannot consist only of dots"),
-        "{err}"
-    );
+    assert_success(&output);
+    assert!(stderr(&output).is_empty(), "{}", stderr(&output));
     assert_eq!(snapshot(&out), before, "output changed");
     assert_eq!(fs::read(out.join("index.html")).unwrap(), home_before);
     assert!(
         !dir.join("index.html").exists(),
         "nothing written outside dist"
     );
+}
+
+/// Asserts that `a` and `b` hold the same files with the same bytes.
+fn assert_same_output(a: &Path, b: &Path) {
+    let files = snapshot(a);
+    assert_eq!(files, snapshot(b), "the two outputs hold different files");
+    for file in &files {
+        assert!(
+            fs::read(a.join(file)).unwrap() == fs::read(b.join(file)).unwrap(),
+            "{file} differs between the two outputs"
+        );
+    }
+}
+
+/// Asserts that no path in `dir`'s output has a segment starting with `.`.
+fn assert_no_hidden_output(dir: &Path) {
+    for file in snapshot(dir) {
+        assert!(
+            !file.split(['/', '\\']).any(|seg| seg.starts_with('.')),
+            "hidden path in the output: {file}"
+        );
+    }
+}
+
+// AC-risk-10.7.5, AC-risk-10.4.4, AC-risk-10.4.5, AC-risk-10.5.4,
+// AC-risk-10.6.2
+#[test]
+fn build_skips_hidden_entries() {
+    let dir = temp_dir("build_skips_hidden_entries");
+    let root = root();
+    let templates = root.join("example").join("meta").join("templates");
+    let config = dir.join("mango.json");
+    write_file(&config, r#"{"base_url": "https://example.com"}"#);
+    let post = "---\n{\"title\": \"One\", \"author\": \"tester\", \"description\": \"desc\", \"date\": \"2026-01-24\", \"tags\": [\"rust\"], \"draft\": false}\n---\n# One\n";
+    let secret = "---\n{\"title\": \"Secret notes\", \"author\": \"tester\", \"description\": \"desc\", \"date\": \"2026-12-31\", \"tags\": [\"secret\"], \"draft\": false}\n---\n# Secret notes\n";
+
+    let twin = |name: &str| {
+        let site = dir.join(name).join("site");
+        let assets = dir.join(name).join("assets");
+        write_file(&site.join("posts").join("one.md"), post);
+        write_file(&site.join("about.md"), &page("About", false));
+        copy_dir(&root.join("example").join("meta").join("assets"), &assets);
+        (site, assets, dir.join(name).join("dist"))
+    };
+    let (site, assets, out) = twin("with");
+    let (plain_site, plain_assets, plain_out) = twin("without");
+
+    write_file(&site.join(".notes.md"), secret);
+    write_file(
+        &site.join("posts").join(".scratch.md"),
+        &page("Scratch", false),
+    );
+    write_file(&site.join(".drafts").join("secret.md"), secret);
+    write_file(
+        &site.join(".drafts").join("my notes.md"),
+        &page("Notes", false),
+    );
+    write_file(
+        &site.join("posts").join(".broken.md"),
+        "---\n{not valid json\n---\nbody\n",
+    );
+    write_file(&assets.join(".DS_Store"), "finder");
+    write_file(&assets.join("css").join(".cache").join("x.css"), "x {}");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        symlink(dir.join("missing-target"), site.join(".#post.md")).unwrap();
+        symlink(
+            dir.join("missing-target"),
+            site.join("posts").join(".#one.md"),
+        )
+        .unwrap();
+        symlink(dir.join("missing-target"), assets.join(".#main.css")).unwrap();
+    }
+
+    let output = build_with_config(&site, &templates, &assets, &out, &config);
+    assert_success(&output);
+    assert!(stderr(&output).is_empty(), "{}", stderr(&output));
+    assert_success(&build_with_config(
+        &plain_site,
+        &templates,
+        &plain_assets,
+        &plain_out,
+        &config,
+    ));
+
+    assert_same_output(&out, &plain_out);
+    assert_no_hidden_output(&out);
+    assert!(out.join("posts").join("one").join("index.html").is_file());
+
+    // A visible bad page still fails the build, before anything is cleaned.
+    let before = snapshot(&out);
+    write_file(&site.join("posts").join("bad.md"), "# no frontmatter\n");
+    let output = build_with_config(&site, &templates, &assets, &out, &config);
+    assert_failure(&output, "visible page without frontmatter");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr(&output).contains("bad.md"), "{}", stderr(&output));
+    assert_eq!(snapshot(&out), before, "a failed build changed the output");
 }
 
 // AC-risk-6.3.1, AC-risk-6.3.2, AC-risk-6.3.4, AC-risk-6.3.8, AC-risk-6.4.1,

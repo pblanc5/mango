@@ -6,10 +6,14 @@ use crate::{
         page::{Page, PageType},
     },
     error::MangoError,
+    hidden::is_hidden,
 };
 
 /// Loads every markdown page under `path` (recursively). Any read or parse
 /// error fails the whole load. Draft pages are parsed but not returned.
+/// Hidden entries (a name starting with `.`) found inside `path` are skipped,
+/// with everything inside a hidden folder, and are never read or checked;
+/// `path` itself is always walked, whatever its name.
 pub fn load(path: &Path) -> Result<Vec<Page>, MangoError> {
     if !path.is_dir() {
         let msg = format!("{} is not a directory", path.display());
@@ -25,6 +29,9 @@ pub fn load(path: &Path) -> Result<Vec<Page>, MangoError> {
 fn traverse(site: &Path, dir: &Path, pages: &mut Vec<Page>) -> Result<(), MangoError> {
     for result in fs::read_dir(dir).map_err(|e| MangoError::io_at(dir, e))? {
         let entry = result.map_err(|e| MangoError::io_at(dir, e))?;
+        if is_hidden(&entry.file_name()) {
+            continue;
+        }
         let path = &entry.path();
 
         // `metadata` follows the link, `is_symlink` below does not, so a
@@ -34,8 +41,9 @@ fn traverse(site: &Path, dir: &Path, pages: &mut Vec<Page>) -> Result<(), MangoE
         // ancestor. An entry that cannot be resolved (a dangling link, an
         // `ELOOP` chain, an entry that vanished after `read_dir`) fails the
         // load with an I/O error naming the link, the same error
-        // `assets::plan` gives. This runs before any name check, so no name
-        // is exempt, hidden ones included.
+        // `assets::plan` gives. Hidden entries (a name starting with `.`) were
+        // skipped above without being resolved, so only visible entries get
+        // here, and no visible name is exempt.
         let target = fs::metadata(path).map_err(|e| MangoError::io_at(path, e))?;
 
         if target.is_dir() {
@@ -125,6 +133,17 @@ mod tests {
         format!(
             "---\n{{\"title\": \"{title}\", \"author\": \"a\", \"description\": \"d\", \"draft\": {draft}}}\n---\nbody\n"
         )
+    }
+
+    /// The slugs of the loaded pages, sorted.
+    fn slugs(site: &Path) -> Vec<String> {
+        let mut slugs: Vec<_> = load(site)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.slug.to_string())
+            .collect();
+        slugs.sort();
+        slugs
     }
 
     // AC-1.1
@@ -422,20 +441,18 @@ mod tests {
         assert!(msg.contains("unknown 'dates'"), "{msg}");
     }
 
-    // AC-arch-3.8.1
+    // AC-risk-10.3.5, AC-risk-10.7.7: a dot-only file name starts with `.`,
+    // so it is skipped as hidden before any file-name check (it used to fail
+    // with arch-3 AC-8.1's error).
     #[test]
-    fn dot_only_file_name_is_rejected_even_for_drafts() {
-        let site = fixture_dir("dot_only_file_name_is_rejected_even_for_drafts");
-        write_file(&site.join("posts/...md"), &page("Draft", true));
+    fn dot_only_file_names_are_skipped_as_hidden() {
+        let site = fixture_dir("dot_only_file_names_are_skipped_as_hidden");
+        write_file(&site.join("...md"), &page("Draft", true));
+        write_file(&site.join("..md"), &page("Dots", false));
+        write_file(&site.join("posts").join("...md"), &page("Dots", false));
+        write_file(&site.join("posts").join("one.md"), &page("One", false));
 
-        let err = load(&site).expect_err("a dot-only file name must fail the load");
-        assert!(matches!(err, MangoError::General(_)), "{err:?}");
-        let msg = err.to_string();
-        assert!(msg.contains("...md"), "{msg}");
-        assert!(
-            msg.contains("invalid file name '..': a segment cannot consist only of dots"),
-            "{msg}"
-        );
+        assert_eq!(slugs(&site), ["posts/one"]);
     }
 
     // AC-risk-6.3.4
@@ -498,24 +515,123 @@ mod tests {
         assert_eq!(slugs, ["posts/one"]);
     }
 
-    // AC-risk-5.4.3 A hidden markdown file that resolves is published like
-    // any other page.
+    // AC-risk-10.3.3, AC-risk-10.7.1: a name starting with `_` is not hidden.
     #[test]
-    fn load_publishes_hidden_markdown_file() {
-        let site = fixture_dir("load_publishes_hidden_markdown_file");
+    fn load_publishes_underscore_names() {
+        let site = fixture_dir("load_publishes_underscore_names");
+        write_file(&site.join("_notes.md"), &page("Notes", false));
+        write_file(&site.join("_drafts").join("idea.md"), &page("Idea", false));
+
+        assert_eq!(slugs(&site), ["_drafts/idea", "_notes"]);
+    }
+
+    // AC-risk-10.3.4, AC-risk-10.7.4: the site folder itself, and the folders
+    // above it, are never skipped, whatever their names.
+    #[test]
+    fn load_walks_site_folder_with_hidden_name() {
+        let dir = fixture_dir("load_walks_site_folder_with_hidden_name");
+        for site in [dir.join(".site"), dir.join(".local").join("site")] {
+            write_file(&site.join("posts").join("one.md"), &page("One", false));
+            assert_eq!(slugs(&site), ["posts/one"], "{}", site.display());
+        }
+    }
+
+    // AC-risk-10.3.2: a visible link to a hidden file is not hidden.
+    #[cfg(unix)]
+    #[test]
+    fn load_reads_visible_link_to_hidden_file() {
+        use std::os::unix::fs::symlink;
+
+        let dir = fixture_dir("load_reads_visible_link_to_hidden_file");
+        let site = dir.join("site");
+        fs::create_dir_all(&site).unwrap();
+        let target = dir.join("dir").join(".secret.md");
+        write_file(&target, &page("Secret", false));
+        symlink(&target, site.join("notes.md")).unwrap();
+
+        assert_eq!(slugs(&site), ["notes"]);
+    }
+
+    // AC-risk-10.4.1, AC-risk-10.4.2, AC-risk-10.7.1
+    #[test]
+    fn load_skips_hidden_files_and_folders() {
+        let site = fixture_dir("load_skips_hidden_files_and_folders");
         write_file(&site.join(".notes.md"), &page("Notes", false));
+        write_file(
+            &site.join("posts").join(".scratch.md"),
+            &page("Scratch", false),
+        );
+        write_file(
+            &site.join(".drafts").join("secret.md"),
+            &page("Secret", false),
+        );
+        write_file(
+            &site.join(".drafts").join("deep").join("visible.md"),
+            &page("Visible", false),
+        );
         write_file(&site.join("posts").join("one.md"), &page("One", false));
 
-        let pages = load(&site).unwrap();
-        let mut slugs: Vec<_> = pages.iter().map(|p| p.slug.to_string()).collect();
-        slugs.sort();
-        assert_eq!(slugs, [".notes", "posts/one"]);
+        assert_eq!(slugs(&site), ["posts/one"]);
+    }
 
-        let notes = pages
-            .iter()
-            .find(|p| p.slug.to_string() == ".notes")
-            .unwrap();
-        assert_eq!(notes.slug.url(), "/.notes/");
+    // AC-risk-10.4.3, AC-risk-10.7.2: hidden entries that would fail the load
+    // if they were visible are never read or checked.
+    #[test]
+    fn hidden_entries_are_not_checked() {
+        let site = fixture_dir("hidden_entries_are_not_checked");
+        write_file(
+            &site.join(".broken.md"),
+            "---\n{not valid json\n---\nbody\n",
+        );
+        write_file(&site.join("posts").join(".nofm.md"), "# no frontmatter\n");
+        write_file(
+            &site.join(".drafts").join("my notes.md"),
+            &page("Notes", false),
+        );
+        write_file(&site.join("posts").join("one.md"), &page("One", false));
+
+        assert_eq!(slugs(&site), ["posts/one"]);
+    }
+
+    // AC-risk-10.4.3, AC-risk-10.3.2, AC-risk-10.7.2: hidden symlinks are
+    // skipped without being resolved, whatever they point at.
+    #[cfg(unix)]
+    #[test]
+    fn hidden_symlinks_are_not_resolved() {
+        use std::os::unix::fs::symlink;
+
+        type Setup = fn(&Path, &Path);
+        let cases: [(&str, Setup); 5] = [
+            ("dangling", |dir, site| {
+                symlink(dir.join("missing-target"), site.join(".#post.md")).unwrap();
+            }),
+            ("loop", |_, site| {
+                symlink(".b.md", site.join(".a.md")).unwrap();
+                symlink(".a.md", site.join(".b.md")).unwrap();
+            }),
+            ("folder", |dir, site| {
+                write_file(&dir.join("vendor").join("page.md"), &page("Vendor", false));
+                symlink(dir.join("vendor"), site.join(".vendor")).unwrap();
+            }),
+            ("ancestor", |_, site| {
+                symlink(site, site.join(".loop")).unwrap();
+            }),
+            ("visible_target", |dir, site| {
+                write_file(&dir.join("shared").join("post.md"), &page("Shared", false));
+                symlink(dir.join("shared").join("post.md"), site.join(".linked.md")).unwrap();
+            }),
+        ];
+
+        for (label, setup) in cases {
+            let dir = fixture_dir(&format!("hidden_symlinks_are_not_resolved_{label}"));
+            let site = dir.join("site");
+            write_file(&site.join("posts").join("one.md"), &page("One", false));
+            setup(&dir, &site);
+
+            let pages = load(&site).unwrap_or_else(|e| panic!("{label}: {e}"));
+            let slugs: Vec<_> = pages.iter().map(|p| p.slug.to_string()).collect();
+            assert_eq!(slugs, ["posts/one"], "{label}");
+        }
     }
 
     // AC-11.1, AC-11.3
@@ -637,10 +753,7 @@ mod tests {
     fn load_fails_on_dangling_symlink() {
         use std::os::unix::fs::symlink;
 
-        for (i, name) in ["broken.md", "broken.txt", "broken", ".#post.md"]
-            .iter()
-            .enumerate()
-        {
+        for (i, name) in ["broken.md", "broken.txt", "broken"].iter().enumerate() {
             let dir = fixture_dir(&format!("load_fails_on_dangling_symlink_{i}"));
             let site = dir.join("site");
             write_file(&site.join("real.md"), &page("Real", false));

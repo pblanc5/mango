@@ -6,13 +6,17 @@ use std::{
 use crate::{
     build::output::{Body, Output, OutputKind},
     error::MangoError,
+    hidden::is_hidden,
 };
 
 /// Lists every file under `assets_source` (recursively, sorted by path, so by
 /// destination) as one asset-copy output each, copied into the `folder`
 /// folder under the output folder. Nothing is copied here: `commit` does that,
 /// so a missing assets folder and output conflicts are caught before the
-/// output folder is cleaned.
+/// output folder is cleaned. Hidden entries (a name starting with `.`) found
+/// inside `assets_source` are skipped, with everything inside a hidden folder,
+/// and are never resolved; `assets_source` itself is always walked, whatever
+/// its name.
 pub fn plan(assets_source: &Path, folder: &Path) -> Result<Vec<Output>, MangoError> {
     if !assets_source.is_dir() {
         let msg = format!(
@@ -41,6 +45,10 @@ pub fn plan(assets_source: &Path, folder: &Path) -> Result<Vec<Output>, MangoErr
 fn collect(root: &Path, dir: &Path, files: &mut Vec<(PathBuf, PathBuf)>) -> Result<(), MangoError> {
     for child in fs::read_dir(dir).map_err(|e| MangoError::io_at(dir, e))? {
         let child = child.map_err(|e| MangoError::io_at(dir, e))?;
+        // First, before `file_type()` or `metadata` can fail on it.
+        if is_hidden(&child.file_name()) {
+            continue;
+        }
         let source = child.path();
         let file_type = child
             .file_type()
@@ -176,6 +184,75 @@ mod tests {
         assert_eq!(labels, ["asset 'a/b.css'", "asset 'z.txt'"]);
         assert_eq!(files[0].path(&dir), dest.join("a/b.css"));
         assert!(!dest.exists(), "plan must not create the destination");
+    }
+
+    fn labels(outputs: &[Output]) -> Vec<String> {
+        outputs.iter().map(|f| f.kind.to_string()).collect()
+    }
+
+    // AC-risk-10.3.3: a name starting with `_` is not hidden.
+    #[test]
+    fn plan_copies_underscore_names() {
+        let dir = fixture_dir("plan_copies_underscore_names");
+        let src = dir.join("src");
+        write_file(&src.join("_partials").join("a.css"), "a {}");
+
+        let files = plan(&src, Path::new("dest")).unwrap();
+        assert_eq!(labels(&files), ["asset '_partials/a.css'"]);
+    }
+
+    // AC-risk-10.3.4, AC-risk-10.7.4: the assets folder itself is never
+    // skipped, whatever its name.
+    #[test]
+    fn plan_walks_assets_folder_with_hidden_name() {
+        let dir = fixture_dir("plan_walks_assets_folder_with_hidden_name");
+        let src = dir.join(".assets");
+        write_file(&src.join("css").join("main.css"), "body {}");
+
+        let files = plan(&src, Path::new("dest")).unwrap();
+        assert_eq!(labels(&files), ["asset 'css/main.css'"]);
+    }
+
+    // AC-risk-10.5.1, AC-risk-10.5.2, AC-risk-10.7.3
+    #[test]
+    fn plan_skips_hidden_files_and_folders() {
+        let dir = fixture_dir("plan_skips_hidden_files_and_folders");
+        let src = dir.join("src");
+        let dest = dir.join("dest");
+        write_file(&src.join("css").join("main.css"), "body {}");
+        write_file(&src.join(".DS_Store"), "finder");
+        write_file(&src.join("css").join(".stylelintrc.json"), "{}");
+        write_file(&src.join(".cache").join("x.css"), "x {}");
+        write_file(&src.join(".cache").join("nested").join("y.css"), "y {}");
+
+        let files = plan(&src, Path::new("dest")).unwrap();
+        assert_eq!(labels(&files), ["asset 'css/main.css'"]);
+
+        copy_into(&dir, files).unwrap();
+        assert!(dest.join("css").join("main.css").is_file());
+        assert!(!dest.join(".DS_Store").exists());
+        assert!(!dest.join("css").join(".stylelintrc.json").exists());
+        assert!(!dest.join(".cache").exists());
+    }
+
+    // AC-risk-10.5.3, AC-risk-10.7.3: hidden symlinks are skipped without
+    // being resolved, so a broken one cannot fail the plan.
+    #[cfg(unix)]
+    #[test]
+    fn plan_does_not_resolve_hidden_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let dir = fixture_dir("plan_does_not_resolve_hidden_symlinks");
+        let src = dir.join("src");
+        write_file(&src.join("css").join("main.css"), "body {}");
+        write_file(&dir.join("theme").join("reset.css"), "* {}");
+        symlink(dir.join("nowhere"), src.join(".#main.css")).unwrap();
+        symlink(src.join(".b"), src.join(".a")).unwrap();
+        symlink(src.join(".a"), src.join(".b")).unwrap();
+        symlink(dir.join("theme"), src.join(".vendor")).unwrap();
+
+        let files = plan(&src, Path::new("dest")).unwrap();
+        assert_eq!(labels(&files), ["asset 'css/main.css'"]);
     }
 
     // AC-10.1, AC-10.2, AC-10.3
