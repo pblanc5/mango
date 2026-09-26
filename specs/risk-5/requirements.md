@@ -49,6 +49,7 @@ Every entry the content loader finds under the site folder, at any depth, must r
 - AC-2.1 IF an entry under the site folder, at any depth, is a symlink whose target does not exist THEN THE content loader SHALL fail the build.
 - AC-2.2 IF an entry under the site folder, at any depth, is part of a symlink chain that loops THEN THE content loader SHALL fail the build, and the build SHALL terminate.
 - AC-2.3 THE content loader SHALL apply AC-2.1 and AC-2.2 whatever the entry's name. A link fails the same way whether it is named like a markdown file (`broken.md`), like any other file (`broken.txt`), has no extension, or is hidden (a name starting with `.`, such as an Emacs lock file `.#post.md`). No name is exempt, just as in the assets folder.
+  **Superseded for hidden names 2026-09-26 by `specs/risk-10/requirements.md`:** an entry whose name starts with `.`, such as `.#post.md`, is skipped without being resolved.
 - AC-2.4 IF resolving an entry under the site folder fails for any other reason THEN THE content loader SHALL fail the build rather than skip the entry.
 - AC-2.5 WHEN the build fails because of AC-2.1, AC-2.2 or AC-2.4 THE error SHALL be the same kind of I/O error that the asset planner reports in AC-1.8, of the form `Mango I/O Error at '<path>': <OS cause>`, and SHALL give the operating system's cause. The path SHALL be the path at which the walk reached the entry, starting from the site folder as given with `--site`, and SHALL name the link itself, not its target. The path is not shortened to a form relative to the site folder; that form stays specific to the folder-rejection error in AC-1.4.
 - AC-2.6 WHEN the build fails because of AC-2.1, AC-2.2 or AC-2.4 THE CLI SHALL print the error to stderr and exit with status 1.
@@ -60,6 +61,7 @@ Every entry the content loader finds under the site folder, at any depth, must r
 - AC-4.1 THE content loader SHALL keep AC-1.4, AC-1.5, AC-1.6 and AC-1.7 unchanged: a symlinked folder is still rejected with the same message, a symlinked markdown file is still read, a symlink to any other file is still ignored, and a symlinked `--site` folder still works.
 - AC-4.2 THE asset planner SHALL keep AC-1.8 unchanged, including its error.
 - AC-4.3 WHEN an entry under the site folder whose name starts with `.` resolves THE content loader SHALL handle it exactly as it does today. For example, a hidden markdown file such as `site/.notes.md` is still published at `/.notes/`.
+  **Superseded 2026-09-26 by `specs/risk-10/requirements.md`:** hidden entries are skipped, not published.
 - AC-4.4 WHEN the example site (`example/site`) is built THE build SHALL succeed, and its output SHALL be byte-identical to the output before this change.
 - AC-4.5 THE change SHALL add no dependency.
 
@@ -96,3 +98,4 @@ None
 | Date | Run | Change |
 |---|---|---|
 | 2026-09-25 | 20260926-004309-risk-5-broken-symlinks-in-site | New spec from backlog RISK-5. Records the current symlink handling under the site folder as baseline. From now on, a dangling link, a looping chain or any other entry that can't be resolved under the site folder fails the build before cleaning. The error is the same I/O error the assets folder gives, and it names the link. Names starting with `.` get no exemption, and hidden-file handling is unchanged. The change is recorded as breaking. Supersedes legacy AC-11.6 and AC-11.7. |
+| 2026-09-26 | 20260926-163650-risk-10-skip-hidden-entries | Noted that AC-2.3 (for hidden names) and AC-4.3 are superseded by `specs/risk-10/requirements.md`: entries whose names start with `.` are skipped without being resolved. The original wording of both criteria is kept. |

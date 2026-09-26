@@ -73,7 +73,9 @@ Mango Frontmatter Error: site/posts/one.md: invalid frontmatter keys: unknown 't
 
 Content files may use LF or CRLF line endings, or a mix of the two: a page written on Windows and its Unix twin build to byte-identical output. Templates and assets are not normalized — whatever line endings they have is what lands in `dist/`.
 
-File and folder names may only use ASCII letters, digits, `-`, `_` and `.`, so every URL is valid without encoding. `site/posts/post_one.md` becomes `/posts/post_one/`. A folder name or file name (without its extension) made only of dots, such as `...md`, is rejected, since it would publish the page outside its folder. A backslash (`\`) is not allowed in a file or folder name either: on Linux and macOS a name such as `a\b.md` fails the build instead of being split into folders. On Windows `\` is simply the folder separator.
+File and folder names may only use ASCII letters, digits, `-`, `_` and `.`, so every URL is valid without encoding. `site/posts/post_one.md` becomes `/posts/post_one/`. A backslash (`\`) is not allowed in a file or folder name either: on Linux and macOS a name such as `a\b.md` fails the build instead of being split into folders. On Windows `\` is simply the folder separator.
+
+Files and folders whose names start with `.` are skipped, under `site/` and `meta/assets/` and at any depth, together with everything inside a hidden folder. So `site/.notes.md` is not published, nothing under `site/.drafts/` is published and `site/.drafts/` gets no section page, and `meta/assets/.DS_Store` is not copied. Skipped entries are not read or checked at all, so an editor lock or swap file, a hidden broken symlink, or a hidden page with bad frontmatter never fails the build. Names starting with `_` are not skipped: `site/_notes.md` is published at `/_notes/`. The rule only applies inside those folders, so the `--site` and `--assets` folders themselves may have any name, such as `--site .content`.
 
 Markdown supports tables, footnotes, strikethrough, task lists and explicit heading IDs (`## Title {#my-id}`).
 
@@ -113,8 +115,8 @@ A build that fails on bad content, config, templates, assets or conflicting outp
 - No dev server (`run`) yet. There is no `publish` command: deploying `dist/` is left to whatever tool you already use.
 - No pagination, section intro pages, syntax highlighting or automatic heading IDs.
 - `clean` has no `--config` option, so it does not protect a config file stored inside the output folder.
-- A symlink inside `meta/assets/` may point at a file (its contents are copied), but a symlink to a folder is a build error: use a real folder. A broken link or a link loop is an error too. The `--assets` folder itself may be a symlink.
-- A symlink inside `site/` may point at a markdown file (it is read, and its URL comes from the link's path), but a symlink to a folder is a build error: use a real folder. As in `meta/assets/`, a broken link or a link loop under `site/` is a build error too, whatever the link's name. The `--site` folder itself may be a symlink.
+- A symlink inside `meta/assets/` may point at a file (its contents are copied), but a symlink to a folder is a build error: use a real folder. A broken link or a link loop is an error too, unless its name starts with `.`: hidden entries are skipped without being checked. The `--assets` folder itself may be a symlink.
+- A symlink inside `site/` may point at a markdown file (it is read, and its URL comes from the link's path), but a symlink to a folder is a build error: use a real folder. As in `meta/assets/`, a broken link or a link loop under `site/` is a build error too, whatever the link's name, unless it starts with `.`: hidden entries are skipped without being checked. The `--site` folder itself may be a symlink.
 
 ## Development
 

@@ -12,6 +12,7 @@ mod build;
 mod config;
 mod content;
 mod error;
+mod hidden;
 mod render;
 
 pub use build::clean::clean;
