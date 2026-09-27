@@ -999,7 +999,18 @@ mod tests {
 
         let dir = fixture_dir("load_reports_symlinked_folder_before_later_bad_entries");
         let site = dir.join("site");
-        for name in ["r.md", "posts-old.md", "postsa.md"] {
+        // Bad files that sort after `posts`, several created first, so the
+        // symlinked folder is reported only if the walk is in name order.
+        for name in [
+            "t.md",
+            "s.md",
+            "pz.md",
+            "r.md",
+            "posts-old.md",
+            "postsb.md",
+            "postsa.md",
+            "u.md",
+        ] {
             write_file(&site.join(name), NO_FRONTMATTER);
         }
         symlink(dir.join("missing-target"), site.join("q.md")).unwrap();
