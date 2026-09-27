@@ -33,7 +33,7 @@ Statuses: `open`, `done`, `dropped`. Sizes: **S** (one module, under a day), **M
 | [RISK-5](#risk-5) | Unresolvable symlinks under `site/` are silently ignored | low | S | `/spec-feature` | — | done |
 | [RISK-6](#risk-6) | Backslashes in file names become folder separators | low | S | `/spec-feature` | — | done |
 | [RISK-7](#risk-7) | Asset-copy errors name the source, not the destination | low | S | `/ship-feature` | — | open |
-| [RISK-8](#risk-8) | Content page order depends on the filesystem | low | S | `/spec-feature` | — | open |
+| [RISK-8](#risk-8) | Content page order depends on the filesystem | low | S | `/spec-feature` | — | done |
 | [RISK-9](#risk-9) | A JSON array is accepted as frontmatter | low | S | `/spec-feature` | — | done |
 | [RISK-10](#risk-10) | Hidden files under `site/` are published | medium | S | `/spec-feature` | — | done |
 | [TEST-1](#test-1) | No test for CRLF line endings | low | S | `/ship-feature` | — | done |
@@ -340,9 +340,11 @@ An entry under `site/` whose target cannot be resolved — a dangling symlink, o
 When copying an asset fails during `commit`, `output::write` reports `IoPath` with the asset's **source** path, even when the destination is the problem (for example, a folder already sits where the file should go). The message then points at the input file, which is not what failed. `copy_failure_is_an_error_naming_the_path` does not catch this, because it only checks for `style.css`, which appears in both paths. `copy_failure_names_the_source_path` (arch-2, AC-5.4) pins the current behavior. Name the destination instead, or both paths, and update that test.
 
 ### RISK-8
-**Content page order depends on the filesystem** · low · S · `/spec-feature` · open
+**Content page order depends on the filesystem** · low · S · `/spec-feature` · done
 
 `loader::load` returns pages in `read_dir` order, which is not sorted and differs between filesystems. Content pages come first in the plan, so the order of `BuildPlan::outputs()`, the order files are written in, and which page's render error is reported when several pages fail all vary by filesystem. The output bytes do not: every listing is sorted, and a page-vs-page collision prints the same labels either way. Recorded as baseline AC-2.4 in `specs/arch-2/requirements.md`. Proposal: sort pages by slug in the loader, so enumeration and error precedence are deterministic too. Because this changes which error a user sees first, it is a `/spec-feature` change.
+
+Resolved by `specs/risk-8/`: `loader::load` now returns pages sorted by slug, so the plan's order, the write order and the choice among several page render errors or collisions are the same on every filesystem, and `loader::traverse` walks each folder's entries in byte-wise name order, with a subfolder's contents at its place, so when several content files are bad the error reported is the first by path, compared segment by segment. The build still stops at the first error, and no output changes. Not breaking, recorded in `CHANGELOG.md`. The loader tests `load_reports_first_bad_entry_by_name_in_a_folder` and `load_reports_bad_entry_in_subfolder_at_the_subfolder_position` prove the order, and `tests/build.rs::build_reports_first_bad_content_file_by_path_keeping_output` proves that the error reaches stderr and the previous output survives. The asset planner's choice among several bad assets still follows the filesystem's listing order; that was out of scope.
 
 ### RISK-9
 **A JSON array is accepted as frontmatter** · low · S · `/spec-feature` · done

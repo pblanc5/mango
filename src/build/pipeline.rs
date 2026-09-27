@@ -57,9 +57,9 @@ impl BuildPlan {
         &self.output_dir
     }
 
-    /// Every output this plan would produce: files first (pages, section
-    /// indexes, home, tag index and tag pages, then the feed and sitemap),
-    /// then asset copies — the order [`commit`] writes them in.
+    /// Every output this plan would produce: files first (pages by slug,
+    /// section indexes, home, tag index and tag pages, then the feed and
+    /// sitemap), then asset copies — the order [`commit`] writes them in.
     pub fn outputs(&self) -> impl Iterator<Item = PlannedOutput<'_>> {
         self.outputs.iter().map(|output| {
             let path = self.relative(&output.path);
@@ -122,8 +122,9 @@ pub fn plan(opts: &BuildOptions) -> Result<BuildPlan, MangoError> {
     let asset_outputs = assets::plan(assets, &asset_folder)?;
 
     // One list, in the order outputs are checked, rendered, enumerated and
-    // written: pages, sections, home, tag index and tag pages, feed, sitemap,
-    // then asset copies (last, so `commit` writes every file before copying).
+    // written: pages (by slug, as the loader returns them), sections, home,
+    // tag index and tag pages, feed, sitemap, then asset copies (last, so
+    // `commit` writes every file before copying).
     let mut outputs = content::build(&pages, &config)?;
     let si = index::section::build_section_index(&pages);
     // The home output reads the index, so build it before `section::build`
