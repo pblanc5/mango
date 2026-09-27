@@ -58,6 +58,7 @@ A page's "key errors" are its unknown keys (REQ-3) and its missing required keys
 ### REQ-5 Precedence of frontmatter errors
 Some problems stop the keys from being read at all. Others only matter once the keys are right. This requirement fixes which error the author sees first, whatever order the keys appear in.
 - AC-5.1 IF the frontmatter block is unterminated, is not valid JSON, or is valid JSON but not an object THEN THE content loader SHALL report that error as it does today, with no key errors.
+  - **Superseded in part (2026-09-27):** the "or is valid JSON but not an object" part is superseded by `specs/risk-9/requirements.md`. Such frontmatter now fails with `frontmatter must be a JSON object, found <kind>`, still with no key errors. The unterminated and invalid-JSON parts stand.
 - AC-5.2 IF a page has key errors and also a value of the wrong JSON type on a known key (for example `"title": 5` or `"draft": "no"`) THEN THE error message SHALL report the key errors (REQ-4) and SHALL NOT report the wrong-typed value. This holds whether the wrong-typed key comes before or after the unknown key in the document.
 - AC-5.3 IF a page has key errors and also an invalid `date`, an invalid tag or an invalid file name THEN THE error message SHALL report the key errors (REQ-4) and SHALL NOT report the date, tag or file-name problem.
 - AC-5.4 IF a page has no key errors THEN THE content loader SHALL report wrong-typed values, then invalid dates, tags and file names, the same way and in the same order as before this change.
@@ -91,3 +92,4 @@ None. The three questions from attempt 1 are resolved:
 | Date | Run | Change |
 |---|---|---|
 | 2026-09-25 | 20260925-182336-risk-4-unknown-frontmatter-keys | Initial requirements. Records the current frontmatter fields and the silent-ignore behavior as baseline. Unknown keys become a build error, drafts included. One error per page lists every unknown and missing required key in a fixed order, and key errors take precedence over type, date, tag and file-name errors. Breaking; ships in 0.2.0. |
+| 2026-09-27 | 20260927-063534-risk-9-non-object-frontmatter | Noted under AC-5.1 that its "valid JSON but not an object" part is superseded by `specs/risk-9/requirements.md`. The criterion's wording is unchanged. |

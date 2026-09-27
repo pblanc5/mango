@@ -442,6 +442,50 @@ mod tests {
         assert!(msg.contains("unknown 'dates'"), "{msg}");
     }
 
+    // AC-risk-9.2.4, AC-risk-9.3.2 Non-object frontmatter fails the load even
+    // on a page that would be a draft, with the file path in front.
+    #[test]
+    fn non_object_frontmatter_fails_the_load_even_for_drafts() {
+        let site = fixture_dir("non_object_frontmatter_fails_the_load_even_for_drafts");
+        write_file(&site.join("posts").join("one.md"), &page("One", false));
+        let file = site.join("posts").join("draft.md");
+        write_file(
+            &file,
+            "---\n[\"t\", \"a\", \"d\", null, null, true]\n---\nbody\n",
+        );
+
+        let err = load(&site).expect_err("array frontmatter in a draft must fail the load");
+        assert!(matches!(err, MangoError::Frontmatter(_)), "{err:?}");
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "Mango Frontmatter Error: {}: frontmatter must be a JSON object, found an array",
+                file.display()
+            )
+        );
+    }
+
+    // AC-risk-9.4.1, AC-risk-9.4.2, AC-risk-9.6.4 The non-object error wins over
+    // an invalid date, an invalid tag and an invalid file name.
+    #[test]
+    fn non_object_frontmatter_wins_over_invalid_file_name() {
+        let site = fixture_dir("non_object_frontmatter_wins_over_invalid_file_name");
+        let file = site.join("my posts").join("x.md");
+        write_file(
+            &file,
+            "---\n[\"t\", \"a\", \"d\", \"2026-02-30\", [\"Rust\"], false]\n---\nbody\n",
+        );
+
+        let err = load(&site).expect_err("array frontmatter must fail the load");
+        assert!(matches!(err, MangoError::Frontmatter(_)), "{err:?}");
+        let msg = err.to_string();
+        assert!(msg.contains(&file.display().to_string()), "{msg}");
+        assert!(msg.contains("found an array"), "{msg}");
+        assert!(!msg.contains("invalid file name"), "{msg}");
+        assert!(!msg.contains("'Rust'"), "{msg}");
+        assert!(!msg.contains("2026-02-30"), "{msg}");
+    }
+
     // AC-risk-10.3.5, AC-risk-10.7.7: a dot-only file name starts with `.`,
     // so it is skipped as hidden before any file-name check (it used to fail
     // with arch-3 AC-8.1's error).
@@ -575,14 +619,18 @@ mod tests {
         assert_eq!(slugs(&site), ["posts/one"]);
     }
 
-    // AC-risk-10.4.3, AC-risk-10.7.2: hidden entries that would fail the load
-    // if they were visible are never read or checked.
+    // AC-risk-10.4.3, AC-risk-10.7.2, AC-risk-9.4.3: hidden entries that would
+    // fail the load if they were visible are never read or checked.
     #[test]
     fn hidden_entries_are_not_checked() {
         let site = fixture_dir("hidden_entries_are_not_checked");
         write_file(
             &site.join(".broken.md"),
             "---\n{not valid json\n---\nbody\n",
+        );
+        write_file(
+            &site.join(".array.md"),
+            "---\n[\"t\", \"a\", \"d\", null, null, false]\n---\nbody\n",
         );
         write_file(&site.join("posts").join(".nofm.md"), "# no frontmatter\n");
         write_file(

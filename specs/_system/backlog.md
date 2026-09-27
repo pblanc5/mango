@@ -34,13 +34,13 @@ Statuses: `open`, `done`, `dropped`. Sizes: **S** (one module, under a day), **M
 | [RISK-6](#risk-6) | Backslashes in file names become folder separators | low | S | `/spec-feature` | — | done |
 | [RISK-7](#risk-7) | Asset-copy errors name the source, not the destination | low | S | `/ship-feature` | — | open |
 | [RISK-8](#risk-8) | Content page order depends on the filesystem | low | S | `/spec-feature` | — | open |
-| [RISK-9](#risk-9) | A JSON array is accepted as frontmatter | low | S | `/spec-feature` | — | open |
+| [RISK-9](#risk-9) | A JSON array is accepted as frontmatter | low | S | `/spec-feature` | — | done |
 | [RISK-10](#risk-10) | Hidden files under `site/` are published | medium | S | `/spec-feature` | — | done |
 | [TEST-1](#test-1) | No test for CRLF line endings | low | S | `/ship-feature` | — | done |
 | [DOC-1](#doc-1) | Stale line references in the system overview | low | S | `/ship-feature` | — | done |
 | [DOC-2](#doc-2) | Line-number citations in the constitution | low | S | `/ship-feature` | — | open |
 
-Recommended order: ARCH-1 → ARCH-3 → ARCH-2, then ARCH-4 to ARCH-7 in any order. FEAT-1 comes after ARCH-1, which gives it the seam it needs; FEAT-2 is closed as dropped. FEAT-3 is independent and can be done at any time; if it lands before FEAT-1, FEAT-1 updates it. The RISK and TEST items are independent and can be done at any time. FEAT-4 would replace JSON frontmatter altogether, so decide on it before RISK-9, which it would make moot. OPS-3 changes only the dev pipeline and can be done at any time.
+Recommended order: ARCH-1 → ARCH-3 → ARCH-2, then ARCH-4 to ARCH-7 in any order. FEAT-1 comes after ARCH-1, which gives it the seam it needs; FEAT-2 is closed as dropped. FEAT-3 is independent and can be done at any time; if it lands before FEAT-1, FEAT-1 updates it. The RISK and TEST items are independent and can be done at any time. FEAT-4 is deferred and JSON frontmatter stays for now, so RISK-9 no longer waits on it. OPS-3 changes only the dev pipeline and can be done at any time.
 
 ---
 
@@ -197,7 +197,7 @@ Product-level work, as opposed to the refactoring that makes up the rest of this
 ### FEAT-4
 **Plain `key: value` frontmatter instead of JSON** · medium · M · `/spec-feature` · open
 
-**Problem.** Frontmatter is a JSON object, which is awkward to write by hand: every string needs quotes, braces and commas must balance, and a trailing comma fails the build. The data is small and flat (six keys: four strings, one date, one boolean and a list of tags), so a full data language buys nothing. Raised by the maintainer on 2026-09-25 while specifying RISK-4. **Undecided:** the maintainer will decide later whether mango should make this change at all.
+**Problem.** Frontmatter is a JSON object, which is awkward to write by hand: every string needs quotes, braces and commas must balance, and a trailing comma fails the build. The data is small and flat (six keys: four strings, one date, one boolean and a list of tags), so a full data language buys nothing. Raised by the maintainer on 2026-09-25 while specifying RISK-4. **Deferred, not dropped** (maintainer, 2026-09-27): JSON stays the frontmatter format for now, to keep options open.
 
 **Proposal.** One `key: value` pair per line between the existing `---` delimiters, split on the first colon, so a title may contain colons:
 ```
@@ -221,7 +221,7 @@ draft: false
 - **Migration.** This breaks every existing content file, including `example/site`. It needs a `CHANGELOG.md` entry with before-and-after examples, and a decision on whether mango offers any conversion help.
 - **Identity.** `mango.json` stays JSON. The spec should say why having two formats is acceptable: config and content are different things.
 
-**Done when.** Content files use the new format and JSON frontmatter is rejected with an error that points to the new format. The example site, `README.md`, `CLAUDE.md` and FEAT-3's skill (if it has landed) are updated. The RISK-4 behavior is preserved in the new parser, and RISK-9 is closed as moot.
+**Done when.** Content files use the new format and JSON frontmatter is rejected with an error that points to the new format. The example site, `README.md`, `CLAUDE.md` and FEAT-3's skill (if it has landed) are updated. The RISK-4 behavior is preserved in the new parser.
 
 ---
 
@@ -345,9 +345,9 @@ When copying an asset fails during `commit`, `output::write` reports `IoPath` wi
 `loader::load` returns pages in `read_dir` order, which is not sorted and differs between filesystems. Content pages come first in the plan, so the order of `BuildPlan::outputs()`, the order files are written in, and which page's render error is reported when several pages fail all vary by filesystem. The output bytes do not: every listing is sorted, and a page-vs-page collision prints the same labels either way. Recorded as baseline AC-2.4 in `specs/arch-2/requirements.md`. Proposal: sort pages by slug in the loader, so enumeration and error precedence are deterministic too. Because this changes which error a user sees first, it is a `/spec-feature` change.
 
 ### RISK-9
-**A JSON array is accepted as frontmatter** · low · S · `/spec-feature` · open
+**A JSON array is accepted as frontmatter** · low · S · `/spec-feature` · done
 
-serde's derived deserializer for `MangoFrontmatter` also accepts a JSON array whose values are in field order, so a page whose frontmatter is `["t", "a", "d", null, null, false]` builds today, with no keys at all. RISK-4 left this alone on purpose: an array has no keys, so its key check doesn't apply, and the spec keeps non-object errors as they were (AC-5.1 in `specs/risk-4/requirements.md`; Risks in `specs/risk-4/design.md`). Nobody writes frontmatter this way on purpose, but it is a second, undocumented format. Proposal: reject any frontmatter that is not a JSON object, with an error naming the file. Because it rejects input that builds today, it is a `/spec-feature` change. [FEAT-4](#feat-4) would make this item moot.
+serde's derived deserializer for `MangoFrontmatter` also accepts a JSON array whose values are in field order, so a page whose frontmatter is `["t", "a", "d", null, null, false]` builds today, with no keys at all. RISK-4 left this alone on purpose: an array has no keys, so its key check doesn't apply, and the spec keeps non-object errors as they were (AC-5.1 in `specs/risk-4/requirements.md`; Risks in `specs/risk-4/design.md`). Nobody writes frontmatter this way on purpose, but it is a second, undocumented format. Proposal: reject any frontmatter that is not a JSON object, with an error naming the file. Because it rejects input that builds today, it is a `/spec-feature` change. It went ahead because [FEAT-4](#feat-4) was deferred on 2026-09-27 and JSON stays the frontmatter format for now. Resolved by `specs/risk-9/`: `frontmatter::parse_json` now validates the block as JSON and rejects any top-level value that is not an object (an array, a string, a number, a boolean or `null`) with `<file>: frontmatter must be a JSON object, found <kind>`, drafts included, before the RISK-4 key check. Invalid JSON and objects are handled as before. Breaking, recorded in `CHANGELOG.md` for 0.3.0. `tests/build.rs::build_fails_on_array_frontmatter_keeping_output` proves the previous output survives.
 
 ### RISK-10
 **Hidden files under `site/` are published** · medium · S · `/spec-feature` · done

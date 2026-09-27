@@ -62,22 +62,54 @@ pub fn parse(content: String) -> Result<(Option<MangoFrontmatter>, String), Mang
     ))
 }
 
-/// Checks the keys of a JSON object first, so every unknown and missing key
-/// is reported together and ahead of any other problem, whatever order the
-/// keys appear in. Anything else (invalid JSON, a non-object, or an object
-/// whose keys are fine) goes to the typed parse and keeps its exact error.
+/// Checks, in order: that valid JSON is an object, then the keys of the
+/// object, then everything else through the typed parse.
 ///
-/// The key check reads the object as keys with `IgnoredAny` values: those
-/// are skipped exactly as the typed parse skips an unknown field's value, so
-/// every object the typed parse accepts gets its keys checked (a
-/// `serde_json::Value` parse would reject `1e400`, a lone surrogate or deep
-/// nesting and let such a key through).
+/// 1. Valid JSON whose top-level value is not an object (an array, a string,
+///    a number, a boolean or `null`) is rejected with one message naming its
+///    kind. The text is validated with `IgnoredAny`, which accepts every
+///    value `serde_json` can skip (`1e400`, a lone surrogate, nesting past
+///    the recursion limit), so such values get this error too. Invalid JSON
+///    fails that validation and keeps the typed parse's exact error.
+/// 2. The keys of an object are checked, so every unknown and missing key is
+///    reported together and ahead of any other problem, whatever order the
+///    keys appear in. The key check reads the object as keys with
+///    `IgnoredAny` values: those are skipped exactly as the typed parse skips
+///    an unknown field's value, so every object the typed parse accepts gets
+///    its keys checked (a `serde_json::Value` parse would reject `1e400`, a
+///    lone surrogate or deep nesting and let such a key through).
+/// 3. Anything left (invalid JSON, or an object whose keys are fine) goes to
+///    the typed parse and keeps its exact error.
 fn parse_json(json: &str) -> Result<MangoFrontmatter, MangoError> {
+    if serde_json::from_str::<IgnoredAny>(json).is_ok()
+        && let Some(kind) = non_object_kind(json)
+    {
+        return Err(MangoError::Frontmatter(format!(
+            "frontmatter must be a JSON object, found {kind}"
+        )));
+    }
     if let Ok(map) = serde_json::from_str::<BTreeMap<String, IgnoredAny>>(json) {
         check_keys(&map)?;
     }
     serde_json::from_str::<MangoFrontmatter>(json)
         .map_err(|e| MangoError::Frontmatter(e.to_string()))
+}
+
+/// The kind of a valid JSON text's top-level value when it is not an
+/// object, read from its first non-whitespace byte; `None` for an object.
+/// Only meaningful for text that parsed as exactly one JSON value: its first
+/// byte after JSON whitespace then decides the kind. Any unexpected byte is
+/// treated as an object, which leaves the text to the unchanged checks.
+fn non_object_kind(json: &str) -> Option<&'static str> {
+    let rest = json.trim_start_matches([' ', '\n', '\t', '\r']);
+    match rest.as_bytes().first()? {
+        b'[' => Some("an array"),
+        b'"' => Some("a string"),
+        b't' | b'f' => Some("a boolean"),
+        b'n' => Some("null"),
+        b'-' | b'0'..=b'9' => Some("a number"),
+        _ => None,
+    }
 }
 
 /// One error listing every unknown key (sorted byte-wise) and then every
@@ -207,12 +239,84 @@ mod tests {
         assert!(msg.contains("duplicate field"), "{msg}");
     }
 
-    // AC-risk-4.1.2, AC-risk-4.5.1 [baseline] Valid JSON that is not an object
-    // keeps the typed parser's error.
+    /// Asserts that `json` is rejected with exactly the non-object message for
+    /// `kind`, and none of the typed parse's or the key check's wording.
+    fn assert_non_object(json: &str, kind: &str) -> String {
+        let msg = frontmatter_error(json);
+        assert_eq!(
+            msg,
+            format!("frontmatter must be a JSON object, found {kind}"),
+            "{json:?}"
+        );
+        // AC-risk-9.3.3
+        for text in [
+            "MangoFrontmatter",
+            "invalid type",
+            "invalid length",
+            "invalid frontmatter keys",
+        ] {
+            assert!(!msg.contains(text), "{json:?}: {msg}");
+        }
+        msg
+    }
+
+    // AC-risk-9.2.1, AC-risk-9.3.2, AC-risk-9.3.3, AC-risk-9.6.1, AC-risk-9.6.6
+    // Every kind of non-object value is rejected with one message naming it.
     #[test]
-    fn non_object_json_is_the_typed_parse_error() {
-        for json in ["42", r#""text""#] {
-            assert_eq!(frontmatter_error(json), typed_parse_error(json), "{json}");
+    fn non_object_frontmatter_is_rejected() {
+        for (json, kind) in [
+            (r#"["t", "a", "d", null, null, false]"#, "an array"),
+            (r#""text""#, "a string"),
+            ("42", "a number"),
+            ("-1", "a number"),
+            ("0.5", "a number"),
+            ("true", "a boolean"),
+            ("false", "a boolean"),
+            ("null", "null"),
+        ] {
+            assert_non_object(json, kind);
+        }
+    }
+
+    // AC-risk-9.2.2, AC-risk-9.2.4, AC-risk-9.3.4, AC-risk-9.6.1 Every array is
+    // rejected, whatever its length and contents: the field-order array that
+    // used to build, a draft, empty, too short or too long, wrong-typed, or
+    // behind leading whitespace. The message does not depend on the contents.
+    #[test]
+    fn array_frontmatter_is_rejected_whatever_it_holds() {
+        let field_order = assert_non_object(r#"["t", "a", "d", null, null, false]"#, "an array");
+        let dated = assert_non_object(
+            r#"["t", "a", "d", "2026-01-24", ["rust"], false]"#,
+            "an array",
+        );
+        assert_eq!(field_order, dated);
+        for json in [
+            r#"["t", "a", "d", null, null, true]"#,
+            "[]",
+            r#"["t"]"#,
+            "[1, 2, 3, 4, 5, 6, 7]",
+            r#"[5, "a", "d", null, null, false]"#,
+            "  \n\t [\"t\", \"a\", \"d\", null, null, false]",
+        ] {
+            assert_non_object(json, "an array");
+        }
+    }
+
+    // AC-risk-9.2.3, AC-risk-9.6.2 Values the JSON parser cannot otherwise
+    // represent (a number out of `f64` range, a lone surrogate, nesting past
+    // the recursion limit) still get the non-object error, inside an array
+    // and as the bare top-level value.
+    #[test]
+    fn non_object_frontmatter_is_rejected_whatever_its_values() {
+        let deep = format!("{}{}", "[".repeat(200), "]".repeat(200));
+        for (json, kind) in [
+            ("[1e400]", "an array"),
+            (r#"["\udc00"]"#, "an array"),
+            (deep.as_str(), "an array"),
+            ("1e400", "a number"),
+            (r#""\udc00""#, "a string"),
+        ] {
+            assert_non_object(json, kind);
         }
     }
 
@@ -225,6 +329,21 @@ mod tests {
         let msg = frontmatter_error(json);
         assert_eq!(msg, typed_parse_error(json));
         assert!(!msg.contains("unknown"), "{msg}");
+    }
+
+    // AC-risk-9.2.6, AC-risk-9.6.3 Invalid JSON keeps the typed parser's
+    // error whatever its first byte, including text that starts like an
+    // array, a string, a number or a boolean, an empty block and trailing
+    // characters after a complete value.
+    #[test]
+    fn invalid_json_keeps_the_typed_parse_error_whatever_it_starts_with() {
+        for json in [
+            r#"["t","#, "[1,]", "tru", r#""abc"#, "-", "1e", "42 x", "[] []", "", "   ",
+        ] {
+            let msg = frontmatter_error(json);
+            assert_eq!(msg, typed_parse_error(json), "{json:?}");
+            assert!(!msg.contains("must be a JSON object"), "{json:?}: {msg}");
+        }
     }
 
     const ACCEPTED_SUFFIX: &str =
