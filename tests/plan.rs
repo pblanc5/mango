@@ -792,3 +792,117 @@ fn first_render_error_in_output_order_is_reported() {
     assert!(msg.contains("section.html"), "{msg}");
     assert!(!msg.contains("tag.html"), "{msg}");
 }
+
+// AC-risk-8.1.6, AC-risk-8.2.4: two content files that differ only by
+// extension have the same slug and collide, with a message that is the same
+// whichever of them the filesystem lists first.
+#[test]
+fn same_slug_from_two_extensions_collides() {
+    let p = project("same_slug_from_two_extensions_collides");
+    write_file(&p.site.join("a.md"), &frontmatter("A", None, None, false));
+    write_file(
+        &p.site.join("a.markdown"),
+        &frontmatter("A too", None, None, false),
+    );
+
+    let err = plan(&options(&p, None)).expect_err("same slug from two extensions");
+
+    assert!(matches!(err, MangoError::General(_)), "{err:?}");
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "Mango Error: output path '{}' would be written by both page 'a' and page 'a'",
+            p.out.join("a").join("index.html").display()
+        )
+    );
+}
+
+/// Content files created in an order that is neither slug order, its reverse,
+/// nor name order: `a/b.md` sorts after `a-c.md` by slug but before it by
+/// name, and `m-n.md` after `m.md` by slug but before it by name.
+const SLUG_ORDER_FILES: [(&str, &str); 7] = [
+    ("b.md", "boom b end"),
+    ("m-n.md", "boom m-n end"),
+    ("a/b.md", "boom a~b end"),
+    ("Z.md", "boom Z end"),
+    ("m.md", "boom m end"),
+    ("_x.md", "boom _x end"),
+    ("a-c.md", "boom a-c end"),
+];
+
+// AC-risk-8.2.2, AC-risk-8.6.2, AC-risk-8.2.3: content pages come first in the
+// plan, in byte-wise slug order, then the section indexes and the rest.
+#[test]
+fn plan_lists_content_pages_in_slug_order() {
+    let p = project("plan_lists_content_pages_in_slug_order");
+    for (rel, title) in SLUG_ORDER_FILES {
+        write_file(&p.site.join(rel), &frontmatter(title, None, None, false));
+    }
+
+    let plan = plan(&options(&p, None)).expect("planning must succeed");
+
+    assert_eq!(
+        paths(&plan),
+        [
+            "Z/index.html",
+            "_x/index.html",
+            "a-c/index.html",
+            "a/b/index.html",
+            "b/index.html",
+            "m/index.html",
+            "m-n/index.html",
+            "a/index.html",
+            "index.html",
+            "tags/index.html",
+            "assets/style.css",
+        ]
+        .map(PathBuf::from)
+    );
+}
+
+// AC-risk-8.3.1, AC-risk-8.6.3: when the page template fails for every page,
+// with an error that names the page, the error reported is for the page whose
+// slug comes first.
+#[test]
+fn first_render_error_among_pages_is_for_the_first_slug() {
+    let p = project("first_render_error_among_pages_is_for_the_first_slug");
+    write_file(
+        &p.templates.join("page.html"),
+        "{{ throw(message=page.title) }}",
+    );
+    for (rel, title) in SLUG_ORDER_FILES {
+        write_file(&p.site.join(rel), &frontmatter(title, None, None, false));
+    }
+
+    let err = plan(&options(&p, None)).expect_err("every page template fails");
+
+    assert!(matches!(err, MangoError::Template(_)), "{err:?}");
+    let msg = err.to_string();
+    assert!(msg.contains("boom Z end"), "{msg}");
+    for (_, title) in SLUG_ORDER_FILES {
+        if title != "boom Z end" {
+            assert!(!msg.contains(title), "{title} in: {msg}");
+        }
+    }
+}
+
+// AC-risk-8.3.2, AC-risk-8.2.4: with two page collisions, the one reported is
+// for the first slug (`m` before `m-n`), not the first name (`m-n.md`).
+#[test]
+fn first_page_collision_is_for_the_first_slug() {
+    let p = project("first_page_collision_is_for_the_first_slug");
+    for name in ["m-n.md", "m-n.markdown", "m.md", "m.markdown"] {
+        write_file(&p.site.join(name), &frontmatter("M", None, None, false));
+    }
+
+    let err = plan(&options(&p, None)).expect_err("two page collisions");
+
+    assert!(matches!(err, MangoError::General(_)), "{err:?}");
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "Mango Error: output path '{}' would be written by both page 'm' and page 'm'",
+            p.out.join("m").join("index.html").display()
+        )
+    );
+}

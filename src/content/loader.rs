@@ -14,6 +14,12 @@ use crate::{
 /// Hidden entries (a name starting with `.`) found inside `path` are skipped,
 /// with everything inside a hidden folder, and are never read or checked;
 /// `path` itself is always walked, whatever its name.
+///
+/// Pages are returned sorted by slug (byte-wise on the `/`-joined text, the
+/// order section indexes use). Each folder's entries are walked in byte-wise
+/// name order, with a subfolder's contents at the subfolder's place, so when
+/// several entries would fail, the error reported is for the first by path,
+/// compared segment by segment (RISK-8).
 pub fn load(path: &Path) -> Result<Vec<Page>, MangoError> {
     if !path.is_dir() {
         let msg = format!("{} is not a directory", path.display());
@@ -23,12 +29,22 @@ pub fn load(path: &Path) -> Result<Vec<Page>, MangoError> {
     let mut pages = Vec::new();
     traverse(path, path, &mut pages)?;
 
-    Ok(pages.into_iter().filter(|page| !page.draft).collect())
+    let mut pages: Vec<Page> = pages.into_iter().filter(|page| !page.draft).collect();
+    pages.sort_by(|a, b| a.slug.cmp(&b.slug));
+    Ok(pages)
 }
 
 fn traverse(site: &Path, dir: &Path, pages: &mut Vec<Page>) -> Result<(), MangoError> {
-    for result in fs::read_dir(dir).map_err(|e| MangoError::io_at(dir, e))? {
-        let entry = result.map_err(|e| MangoError::io_at(dir, e))?;
+    // `read_dir` lists entries in a platform- and filesystem-dependent order,
+    // so they are sorted by name first: the walk, and with it the first
+    // failing entry, is then the same on every system (RISK-8).
+    let mut entries = fs::read_dir(dir)
+        .map_err(|e| MangoError::io_at(dir, e))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| MangoError::io_at(dir, e))?;
+    entries.sort_by_key(|entry| entry.file_name());
+
+    for entry in entries {
         // First, before `metadata` or any read can fail on it.
         if is_hidden(&entry.file_name()) {
             continue;
@@ -875,5 +891,123 @@ mod tests {
             panic!("expected IoPath, got {err:?}");
         };
         assert_eq!(path, &link);
+    }
+
+    const NO_FRONTMATTER: &str = "# no frontmatter\n";
+
+    /// The `Frontmatter` error text `load` gives for a file without
+    /// frontmatter, up to the end of the reason.
+    fn missing_frontmatter(path: &Path) -> String {
+        format!(
+            "Mango Frontmatter Error: {}: missing frontmatter",
+            path.display()
+        )
+    }
+
+    // AC-risk-8.2.1, AC-risk-8.6.1, AC-risk-8.2.3: pages come back in
+    // byte-wise slug order, which is neither the creation order nor name
+    // order (`a/b` after `a-c`, `m-n` after `m`). Not sorted by the test.
+    #[test]
+    fn load_returns_pages_in_slug_order() {
+        let site = fixture_dir("load_returns_pages_in_slug_order");
+        for rel in [
+            "b.md", "m-n.md", "a/b.md", "Z.md", "m.md", "_x.md", "a-c.md",
+        ] {
+            write_file(&site.join(rel), &page(rel, false));
+        }
+        write_file(&site.join("c.md"), &page("Draft", true));
+
+        let slugs: Vec<_> = load(&site)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.slug.to_string())
+            .collect();
+        assert_eq!(slugs, ["Z", "_x", "a-c", "a/b", "b", "m", "m-n"]);
+    }
+
+    // AC-risk-8.4.1, AC-risk-8.4.2, AC-risk-8.4.5, AC-risk-8.6.4: among bad
+    // files in one folder, the first by byte-wise name is reported, and a bad
+    // hidden file that would sort first is still skipped.
+    #[test]
+    fn load_reports_first_bad_entry_by_name_in_a_folder() {
+        let site = fixture_dir("load_reports_first_bad_entry_by_name_in_a_folder");
+        for name in [
+            "m.md",
+            "a.md",
+            "z.md",
+            "_x.md",
+            "m-n.md",
+            "k.md",
+            "Q.md",
+            "b.md",
+            ".first.md",
+        ] {
+            write_file(&site.join(name), NO_FRONTMATTER);
+        }
+
+        let err = load(&site).expect_err("bad files must fail the load");
+        assert!(matches!(err, MangoError::Frontmatter(_)), "{err:?}");
+        let msg = err.to_string();
+        assert!(
+            msg.starts_with(&missing_frontmatter(&site.join("Q.md"))),
+            "{msg}"
+        );
+    }
+
+    // AC-risk-8.4.1, AC-risk-8.6.4: a subfolder's contents take the
+    // subfolder's place in name order, so a bad file inside it wins over bad
+    // files whose names sort after the subfolder's name.
+    #[test]
+    fn load_reports_bad_entry_in_subfolder_at_the_subfolder_position() {
+        // (a) The folder `a` sorts before `a-c.md`, `a_b.md` and `a.md`.
+        let site = fixture_dir("load_reports_bad_entry_in_subfolder_a");
+        for name in ["d.md", "a-c.md", "c.md", "a_b.md", "b.md", "a.md"] {
+            write_file(&site.join(name), NO_FRONTMATTER);
+        }
+        write_file(&site.join("a").join("y.md"), &page("Y", false));
+        write_file(&site.join("a").join("z.md"), NO_FRONTMATTER);
+
+        let err = load(&site).expect_err("bad files must fail the load");
+        let msg = err.to_string();
+        assert!(
+            msg.starts_with(&missing_frontmatter(&site.join("a").join("z.md"))),
+            "{msg}"
+        );
+
+        // (b) The folder `_d` sorts before every lowercase name.
+        let site = fixture_dir("load_reports_bad_entry_in_subfolder_b");
+        for name in ["c.md", "a.md", "d.md", "b.md"] {
+            write_file(&site.join(name), NO_FRONTMATTER);
+        }
+        write_file(&site.join("_d").join("z.md"), NO_FRONTMATTER);
+
+        let err = load(&site).expect_err("bad files must fail the load");
+        let msg = err.to_string();
+        assert!(
+            msg.starts_with(&missing_frontmatter(&site.join("_d").join("z.md"))),
+            "{msg}"
+        );
+    }
+
+    // AC-risk-8.4.1, AC-risk-8.4.3: a symlinked folder is reported at its own
+    // position by name, ahead of bad entries that sort after it, whatever
+    // their kind of error.
+    #[cfg(unix)]
+    #[test]
+    fn load_reports_symlinked_folder_before_later_bad_entries() {
+        use std::os::unix::fs::symlink;
+
+        let dir = fixture_dir("load_reports_symlinked_folder_before_later_bad_entries");
+        let site = dir.join("site");
+        for name in ["r.md", "posts-old.md", "postsa.md"] {
+            write_file(&site.join(name), NO_FRONTMATTER);
+        }
+        symlink(dir.join("missing-target"), site.join("q.md")).unwrap();
+        write_file(&dir.join("shared").join("one.md"), &page("One", false));
+        symlink(dir.join("shared"), site.join("posts")).unwrap();
+
+        let err = load(&site).expect_err("a symlinked folder must fail the load");
+        assert!(matches!(err, MangoError::General(_)), "{err:?}");
+        assert!(err.to_string().contains("content folder 'posts'"), "{err}");
     }
 }

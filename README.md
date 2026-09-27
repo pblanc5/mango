@@ -114,7 +114,7 @@ All five templates are required. Every template gets `config`; `page.html` gets 
 
 ## Safe builds
 
-A build that fails on bad content, config, templates, assets or conflicting outputs stops before `dist/` is touched, so the previous output stays intact. mango also refuses to clean an output folder that is, or contains, the current directory, the site, templates or assets folder, or the config file.
+A build that fails on bad content, config, templates, assets or conflicting outputs stops before `dist/` is touched, so the previous output stays intact. A build stops at the first error it finds. When several content files have errors, the one reported is the first by path: each folder's files and subfolders are checked in name order, compared byte by byte, so `Z.md` comes before `a.md`, and the folder `a/` (with everything in it) before `a-c.md`. Fix it and build again to see the next one. mango also refuses to clean an output folder that is, or contains, the current directory, the site, templates or assets folder, or the config file.
 
 ## Known limitations
 
