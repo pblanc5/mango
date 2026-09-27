@@ -7,6 +7,7 @@ All notable changes to mango are recorded here, for the people who use it to bui
 ### Changed
 
 - **Breaking:** files and folders whose names start with `.` are now skipped. Under the site folder, a hidden page such as `site/.notes.md`, and every page inside a hidden folder such as `site/.drafts/`, is no longer published, listed in a section or on the home page, tagged, or added to the feed or sitemap, and a hidden folder no longer gets a section page. Under the assets folder, hidden files such as `.DS_Store` are no longer copied. Hidden entries are not read or checked at all, so a hidden broken symlink such as an editor lock file (`.#post.md`), or a hidden page with bad frontmatter, no longer fails the build. Names starting with `_` are not affected. If a page with a hidden name should stay published, rename it.
+- **Breaking:** frontmatter must now be a JSON object. A page whose frontmatter is a JSON array holding the values in field order, such as `["Post One", "tester", "my first post", null, null, false]`, used to build and now fails the build with an error naming the file, drafts included. Rewrite such a page's frontmatter as an object with named keys (`{"title": "Post One", "author": "tester", ...}`). Frontmatter that is a string, a number, `true`, `false` or `null` already failed, and now gets the same clearer error.
 
 ## [0.2.0] - 2026-09-25
 

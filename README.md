@@ -71,6 +71,12 @@ Any other key is an error, drafts included, which catches typos such as `tag` fo
 Mango Frontmatter Error: site/posts/one.md: invalid frontmatter keys: unknown 'tag', unknown 'titel', missing 'title'; accepted keys are 'title', 'author', 'description', 'date', 'tags', 'draft'
 ```
 
+The frontmatter block must hold a JSON object, with the fields above as named keys. Any other JSON value (an array, a string, a number, `true` or `false`, or `null`) fails the build with an error naming the file, drafts included:
+
+```text
+Mango Frontmatter Error: site/posts/one.md: frontmatter must be a JSON object, found an array
+```
+
 Content files may use LF or CRLF line endings, or a mix of the two: a page written on Windows and its Unix twin build to byte-identical output. Templates and assets are not normalized — whatever line endings they have is what lands in `dist/`.
 
 File and folder names may only use ASCII letters, digits, `-`, `_` and `.`, so every URL is valid without encoding. `site/posts/post_one.md` becomes `/posts/post_one/`. A backslash (`\`) is not allowed in a file or folder name either: on Linux and macOS a name such as `a\b.md` fails the build instead of being split into folders. On Windows `\` is simply the folder separator.

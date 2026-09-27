@@ -753,6 +753,36 @@ fn build_fails_on_unknown_frontmatter_keys_keeping_output() {
     assert_eq!(snapshot(&out), before, "output changed");
 }
 
+// AC-risk-9.3.1, AC-risk-9.5.1, AC-risk-9.6.5
+#[test]
+fn build_fails_on_array_frontmatter_keeping_output() {
+    let dir = temp_dir("build_fails_on_array_frontmatter_keeping_output");
+    let site = dir.join("site");
+    let out = dir.join("dist");
+    write_file(&site.join("posts/one.md"), &page("One", false));
+
+    assert_success(&build_temp_site(&site, &out));
+    write_file(&out.join("marker.txt"), "keep me");
+    let before = snapshot(&out);
+
+    write_file(
+        &site.join("posts/array.md"),
+        "---\n[\"Array\", \"tester\", \"desc\", null, null, false]\n---\n# Array\n",
+    );
+    let output = build_temp_site(&site, &out);
+
+    assert_failure(&output, "array frontmatter");
+    assert_eq!(output.status.code(), Some(1));
+    let err = stderr(&output);
+    let expected = format!(
+        "{}: frontmatter must be a JSON object, found an array",
+        site.join("posts").join("array.md").display()
+    );
+    assert!(err.contains(&expected), "{err}");
+    assert!(!err.contains("MangoFrontmatter"), "{err}");
+    assert_eq!(snapshot(&out), before, "output changed");
+}
+
 // AC-risk-4.3.3
 #[test]
 fn build_fails_on_unknown_frontmatter_key_in_draft() {
